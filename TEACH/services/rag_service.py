@@ -104,6 +104,7 @@ Question:
 {question}
 
 Explain clearly in simple words.
+Do not add information not present in the context.
 Use tables if needed.
 """
 

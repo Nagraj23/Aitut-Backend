@@ -111,22 +111,22 @@ public class AuthService {
     }
     // ⚒️ UPDATE PROFILE
     public String updateProfile(UUID userId, UpdateProfileDTO dto) {
-        System.out.println("⚒️ [UPDATE PROFILE] START | UserID: " + userId);
 
         Users user = repo.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found 💀"));
 
-        // Update fields from DTO
         user.setName(dto.getName());
-//        user.setPhoneNo(dto.getPhoneNo());
-//        user.setGender(dto.getGender());
-//        user.setDateOfBirth(dto.getDateOfBirth());
-//        user.setBloodGroup(dto.getBloodGroup());
-//        user.setProfilePicUrl(dto.getProfilePicUrl());
+        user.setPhoneNo(dto.getPhoneNo());
+        user.setGender(dto.getGender());
+        user.setDateOfBirth(dto.getDateOfBirth());
+        user.setBloodGroup(dto.getBloodGroup());
+        user.setProfilePicUrl(dto.getProfilePicUrl());
+        user.setCollege(dto.getCollege());
+        user.setDepartment(dto.getDepartment());
+        user.setSpecialization(dto.getSpecialization());
 
         repo.save(user);
 
-        System.out.println("✅ [UPDATE PROFILE] SUCCESS | UserID: " + userId);
         return "Profile updated successfully ✨";
     }
 
