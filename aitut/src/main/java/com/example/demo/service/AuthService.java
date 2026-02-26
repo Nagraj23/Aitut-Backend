@@ -99,7 +99,7 @@ public class AuthService {
         }
 
         // 1. Generate the real token
-        String token = jwtService.generateToken(user.getEmail());
+        String token = jwtService.generateToken(user.getEmail(),user.getId());
 
         // 2. Convert UUID and Enum to String to match your AuthResponse DTO
         return new AuthResponse(
@@ -147,7 +147,7 @@ public class AuthService {
         otpStore.put(email, otp);
         otpExpiry.put(email, System.currentTimeMillis() + OTP_EXPIRY_MS);
 
-        // emailService.sendOtpEmail(email, "Ai-Tut Password Reset", user.getName(), otp);
+         emailService.sendOtpEmail(email, "Ai-Tut Password Reset", user.getName(), otp);
 
         System.out.println("🔐 [FORGOT PASSWORD] OTP for " + email + " is: " + otp);
         return "OTP sent for password reset 🔥";
