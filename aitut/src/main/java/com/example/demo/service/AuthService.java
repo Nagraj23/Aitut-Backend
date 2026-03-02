@@ -7,9 +7,13 @@ import com.example.demo.security.JWTService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-
-import java.time.LocalDateTime;
+import com.example.demo.model.RefreshToken;
 import java.util.*;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
+import com.google.api.client.http.javanet.NetHttpTransport;
+import com.google.api.client.json.gson.GsonFactory;
+import java.util.Collections;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -17,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AuthService {
 
     private final UsersRepo repo;
+    private final RefreshTokenService refreshTokenService;
     private final PasswordEncoder encoder;
      private final JWTService jwtService; // Uncomment when your JWT service is ready
      private final EmailService emailService; // Uncomment when your Email service is ready
@@ -98,17 +103,70 @@ public class AuthService {
             throw new RuntimeException("Invalid credentials ❌");
         }
 
-        // 1. Generate the real token
-        String token = jwtService.generateToken(user.getEmail(),user.getId());
+        // 1. Generate the short-lived Access Token (e.g., 15-30 mins)
+        String accessToken = jwtService.generateToken(user.getEmail(), user.getId());
 
-        // 2. Convert UUID and Enum to String to match your AuthResponse DTO
+        // 2. Generate the long-lived Refresh Token in REDIS (e.g., 30 days)
+        // Pass the user.getId() here so it's stored in Redis
+        RefreshToken refreshToken = refreshTokenService.createRefreshtoken(user.getEmail(), user.getId());
+
+        // 3. Return both to the user
         return new AuthResponse(
-                token,
-                user.getId().toString(), // Convert UUID to String
+                accessToken,
+                refreshToken.getToken(),
+                user.getId().toString(),
                 user.getName(),
-                user.getRole().toString() // Convert Enum to String
+                user.getRole().toString()
         );
     }
+
+    // Update this in AuthService.java
+    public AuthResponse googleLogin(String idTokenString) {
+        try {
+            // 1. Verify the token with Google
+            GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
+                    new NetHttpTransport(), new GsonFactory())
+//                    .setAudience(Collections.singletonList("511625866788-i1cj7pgim65c9splvnd2chmptr1mrath.apps.googleusercontent.com"))
+                    .build();
+
+            GoogleIdToken idToken = verifier.verify(idTokenString);
+
+            if (idToken != null) {
+                GoogleIdToken.Payload payload = idToken.getPayload();
+                String email = payload.getEmail();
+                String name = (String) payload.get("name");
+
+                // 2. Reuse your existing logic to find/create user
+                Users user = repo.findByEmail(email).orElseGet(() -> {
+                    Users newUser = Users.builder()
+                            .name(name)
+                            .email(email)
+                            .password(encoder.encode(UUID.randomUUID().toString()))
+                            .role(Users.Role.STUDENT)
+                            .verified(true)
+                            .build();
+                    return repo.save(newUser);
+                });
+
+                // 3. Generate Tokens
+                String accessToken = jwtService.generateToken(user.getEmail(), user.getId());
+                RefreshToken refreshToken = refreshTokenService.createRefreshtoken(user.getEmail(), user.getId());
+
+                return new AuthResponse(
+                        accessToken,
+                        refreshToken.getToken(),
+                        user.getId().toString(),
+                        user.getName(),
+                        user.getRole().toString()
+                );
+            } else {
+                throw new RuntimeException("Invalid Google Token ❌");
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Google Auth Failed: " + e.getMessage());
+        }
+    }
+
     // ⚒️ UPDATE PROFILE
     public String updateProfile(UUID userId, UpdateProfileDTO dto) {
 
