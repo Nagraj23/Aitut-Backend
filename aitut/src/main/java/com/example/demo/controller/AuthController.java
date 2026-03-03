@@ -36,12 +36,23 @@ public class AuthController {
     }
 
     // ✅ Verify OTP
+//    @PostMapping("/verify-otp")
+//    public ResponseEntity<String> verifyOtp(@RequestBody OtpVerifyRequest otpReq) {
+//        String result = authService.verifyOtp(otpReq.getEmail(), otpReq.getOtp());
+//        return ResponseEntity.ok(result);
+//    }
+
     @PostMapping("/verify-otp")
     public ResponseEntity<String> verifyOtp(@RequestBody OtpVerifyRequest otpReq) {
-        String result = authService.verifyOtp(otpReq.getEmail(), otpReq.getOtp());
+
+        String result = authService.verifyOtp(
+                otpReq.getEmail(),
+                otpReq.getOtp(),
+                otpReq.getType()
+        );
+
         return ResponseEntity.ok(result);
     }
-
     @PostMapping("/google-login")
     public ResponseEntity<AuthResponse> googleLogin(@RequestBody Map<String, String> request) {
         // This extracts the "token" from the JSON body
@@ -85,7 +96,12 @@ public class AuthController {
                 })
                 .orElseThrow(() -> new RuntimeException("Refresh token is not in database or expired!"));
     }
+    @PostMapping("/github")
+    public ResponseEntity<AuthResponse> githubLogin(@RequestBody GithubLoginRequest request) {
 
+        AuthResponse response = authService.githubLogin(request.getCode());
+        return ResponseEntity.ok(response);
+    }
     // 🔥 Reset Password
     @PostMapping("/reset-password")
     public ResponseEntity<String> resetPassword(@RequestBody ResetPasswordDTO request) {

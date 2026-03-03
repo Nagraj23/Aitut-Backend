@@ -29,6 +29,7 @@ public class Seccurity {
                 .csrf(csrf -> csrf.disable()) // Required for Postman testing
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll() // Public endpoints
+                        .requestMatchers("/api/auth/auth/**").permitAll()
                         .anyRequest().authenticated() // Everything else needs a token
                 )
                 // This line makes sure your token is checked before anything else!
