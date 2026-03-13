@@ -11,6 +11,7 @@ class Assessment(models.Model):
     answers = models.JSONField(null=True, blank=True) # User's responses
     is_completed = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['day_number']

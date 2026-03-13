@@ -1,14 +1,17 @@
 import json
 import os
-import google.generativeai as genai
+from groq import Groq  # 👈 Changed
 from django.conf import settings
 
 def generate_diagnostic(domain, university, day_number):
-    """Call Gemini LLM and return parsed JSON test."""
+    """Call Groq LLM and return parsed JSON test."""
     print(f"DEBUG: AI logic received Domain='{domain}', Day={day_number}")
-    # 1. Initialize inside the function to ensure settings are loaded
-    genai.configure(api_key=settings.GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    
+    # 1. Initialize Groq client
+    client = Groq(api_key=settings.GROQ_API_KEY) # 👈 Ensure this is in settings
+    
+    # Using Llama 3.1 8B for high speed and generous daily limits
+    model_name = "llama-3.1-8b-instant" 
 
     if day_number <= 2:
         level = "Introductory (Fundamentals & Syntax)"
@@ -51,52 +54,57 @@ def generate_diagnostic(domain, university, day_number):
     """
     
     try:
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "response_mime_type": "application/json"
-            }
+        # 👈 Groq completion logic
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"} # 👈 Forces valid JSON
         )
         
-        content = response.text
+        content = response.choices[0].message.content
         if not content:
-            raise ValueError("Gemini returned an empty response.")
+            raise ValueError("Groq returned an empty response.")
             
         return json.loads(content)
     except Exception as e:
-        raise ValueError(f"Gemini generation failed: {str(e)}")
+        raise ValueError(f"Groq generation failed: {str(e)}")
 
 def evaluate_answer(question, student_answer):
-    """Grade a descriptive answer for knowledge gaps using Gemini."""
+    """Grade a descriptive answer for knowledge gaps using Groq."""
     
-    # 2. Re-initialize here as well to avoid scope errors
-    genai.configure(api_key=settings.GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    client = Groq(api_key=settings.GROQ_API_KEY)
+    model_name = "llama-3.1-8b-instant"
 
     prompt = f"""
+    As an expert technical tutor, analyze this student's answer.
+    
     Question: {question}
     Student Answer: {student_answer}
 
-    Evaluate this answer for clarity, logic, and creative thinking.
-    Return ONLY valid JSON:
+    Task:
+    1. If the answer is correct and explains the concept well, set level to "Strong" and knowledge_gap to null.
+    2. If the answer is partially correct or vague, set level to "Intermediate" and identify the missing technical detail.
+    3. If the answer is wrong, set level to "Weak" and identify the core concept they don't understand.
+
+    Return ONLY JSON:
     {{
-      "level": "Strong" or "Intermediate" or "Weak",
-      "knowledge_gap": "one specific concept the student is missing",
-      "feedback": "one sentence of actionable advice"
-    }}
-    """
+      "level": "Strong" | "Intermediate" | "Weak",
+      "concept_mastered": "The specific technical topic they explained well (max 5 words)",
+      "knowledge_gap": "The specific technical concept they missed (max 5 words) or null if Strong",
+      "feedback": "One helpful sentence."
+    }}"""
     
     try:
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "response_mime_type": "application/json"
-            }
+        # 👈 Groq evaluation logic
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
         )
         
-        content = response.text
+        content = response.choices[0].message.content
         if not content:
-            raise ValueError("Gemini returned an empty evaluation.")
+            raise ValueError("Groq returned an empty evaluation.")
             
         return json.loads(content)
     except Exception as e:

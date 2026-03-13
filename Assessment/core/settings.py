@@ -36,7 +36,10 @@ REST_FRAMEWORK = {
 }
 
 SPRING_JWT_SECRET = os.getenv("SPRING_JWT_SECRET") # Must match Spring Boot secret [cite: 10]
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") # 👈 Add this
+
+# Optional: Define your preferred Groq model here for easy global changes
+GROQ_DEFAULT_MODEL = "llama-3.1-8b-instant"
 
 ROOT_URLCONF = 'core.urls'
 WSGI_APPLICATION = 'core.wsgi.application'
