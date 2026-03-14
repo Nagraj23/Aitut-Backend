@@ -30,6 +30,7 @@ public class Seccurity {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll() // Public endpoints
                         .requestMatchers("/api/auth/auth/**").permitAll()
+                        .requestMatchers("/api/reminders/**").permitAll()
                         .anyRequest().authenticated() // Everything else needs a token
                 )
                 // This line makes sure your token is checked before anything else!
