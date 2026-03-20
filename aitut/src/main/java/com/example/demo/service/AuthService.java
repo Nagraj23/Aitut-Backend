@@ -20,6 +20,8 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 
+import org.springframework.http.HttpHeaders; // <--- ADD THIS
+import org.springframework.http.HttpEntity;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -52,26 +54,41 @@ public class AuthService {
 
     // ================= REGISTER =================
 
-    public String register(RegisterRequest req) {
+   public String register(RegisterRequest req) {
+    
+    Optional<Users> existingUser = repo.findByEmail(req.getEmail());
 
-        if (repo.existsByEmail(req.getEmail())) {
-            throw new RuntimeException("Email already registered!");
+    if (existingUser.isPresent()) {
+       
+        if (existingUser.get().isVerified()) {
+            throw new RuntimeException("Email already registered and verified!");
         }
-
-        Users user = Users.builder()
-                .name(req.getName())
-                .email(req.getEmail())
-                .password(encoder.encode(req.getPassword()))
-                .role(Users.Role.valueOf(req.getRole().name()))
-                .verified(false)
-                .build();
-
-        repo.save(user);
-
-        generateAndSendOtp(user.getEmail(), user.getName(), "Account Verification");
-
-        return "Registration successful! Check email for verification OTP.";
+      
+        Users userToUpdate = existingUser.get();
+        userToUpdate.setName(req.getName());
+        userToUpdate.setPassword(encoder.encode(req.getPassword()));
+        userToUpdate.setRole(Users.Role.valueOf(req.getRole().name()));
+        
+        repo.save(userToUpdate);
+        generateAndSendOtp(userToUpdate.getEmail(), userToUpdate.getName(), "Account Verification");
+        
+        return "Registration updated! A new OTP has been sent to your email.";
     }
+
+    // 4. If they don't exist at all, create new (your original logic)
+    Users newUser = Users.builder()
+            .name(req.getName())
+            .email(req.getEmail())
+            .password(encoder.encode(req.getPassword()))
+            .role(Users.Role.valueOf(req.getRole().name()))
+            .verified(false)
+            .build();
+
+    repo.save(newUser);
+    generateAndSendOtp(newUser.getEmail(), newUser.getName(), "Account Verification");
+
+    return "Registration successful! Check email for verification OTP.";
+}
 
     // ================= VERIFY OTP =================
 
@@ -318,7 +335,7 @@ public class AuthService {
 
     private void generateAndSendOtp(String email, String name, String subject) {
 
-        String otp = String.format("%06d", new Random().nextInt(999999));
+        String otp = String.format("%04d", new Random().nextInt(10000));
 
         otpStore.put(email, otp);
         otpExpiry.put(email, System.currentTimeMillis() + OTP_EXPIRY_MS);
