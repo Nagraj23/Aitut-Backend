@@ -3,7 +3,8 @@ from sqlalchemy.orm import sessionmaker, Session
 from .models import Base
 
 # Change this to your actual Postgres credentials
-DATABASE_URL = "postgresql://postgres:Nagraj@2005@localhost:5432/Aitut"
+# Replace Nagraj@2005 with Nagraj%402005
+DATABASE_URL = "postgresql://postgres:Nagraj%402005@localhost:5432/Aitut"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

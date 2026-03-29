@@ -2,6 +2,7 @@ package com.example.demo.security;
 
 import com.example.demo.repository.UsersRepo;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -18,9 +19,11 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 @EnableWebSecurity
 @RequiredArgsConstructor
+@Slf4j
 public class Seccurity {
 
     private final JwtAuthFilter jwtAuthFilter;
+//    private Object outh2Login;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -35,6 +38,12 @@ public class Seccurity {
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+//                .oauth2Login(oAuth2->oAuth2.failureHandler(
+//                        ((request, response, exception) -> {
+//                            log.error(exception.getMessage());
+//                        })
+//                ));
+//        .outh2Login
 
         return http.build();
     }

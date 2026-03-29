@@ -5,7 +5,7 @@ from functools import lru_cache
 class Settings(BaseSettings):
     # API Keys
     GEMINI_API_KEY: str = ""
-    GROQ_API_KEY: str = ""  # 👈 Add this for the new Groq service
+    GROQ_API_KEY: str = "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"  # 👈 Add this for the new Groq service
 
     # Paths
     CHROMA_DB_PATH: str = "./chroma_data"

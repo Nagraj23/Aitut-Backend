@@ -6,6 +6,8 @@ import java.time.LocalDate;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@Setter
+@Getter
 @Builder
 public class UpdateProfileDTO {
 
@@ -20,4 +22,8 @@ public class UpdateProfileDTO {
     private String college;
     private String department;
     private String specialization;
+    private String University;
+    private String TargetCourse;
+    private String CourseDuration;
+    private Integer DailyStudyHours;
 }

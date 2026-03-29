@@ -8,6 +8,7 @@ import com.example.demo.security.JWTService;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+// <--- ADD THIS
 import org.springframework.http.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -20,8 +21,6 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 
-import org.springframework.http.HttpHeaders; // <--- ADD THIS
-import org.springframework.http.HttpEntity;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -92,32 +91,38 @@ public class AuthService {
 
     // ================= VERIFY OTP =================
 
-    public String verifyOtp(String email, String otpInput, String type) {
+   public String verifyOtp(String email, String otpInput, String type) {
+    // LOG 1: See exactly what the App sent
+    System.out.println("DEBUG -> Email: [" + email + "] | OTP: [" + otpInput + "] | Type: [" + type + "]");
 
-        if (!isOtpValid(email, otpInput)) {
-            return "Invalid or expired OTP!";
-        }
-
-        if ("ACCOUNT".equalsIgnoreCase(type)) {
-
-            Users user = repo.findByEmail(email)
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-
-            user.setVerified(true);
-            repo.save(user);
-
-        } else if ("RESET".equalsIgnoreCase(type)) {
-
-            otpVerifiedForReset.put(email, true);
-
-        } else {
-            throw new RuntimeException("Invalid OTP type");
-        }
-
-        clearOtp(email);
-
-        return "OTP verified successfully!";
+    if (!isOtpValid(email, otpInput)) {
+        System.out.println("DEBUG -> OTP Check Failed: isOtpValid returned false");
+        return "Invalid or expired OTP!";
     }
+
+    if ("ACCOUNT".equalsIgnoreCase(type)) {
+        System.out.println("DEBUG -> Processing ACCOUNT verification");
+        Users user = repo.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found: " + email));
+
+        user.setVerified(true);
+        repo.save(user);
+
+    } else if ("FORGOT".equalsIgnoreCase(type) || "RESET".equalsIgnoreCase(type)) {
+        // Log both so you know which one hit
+        System.out.println("DEBUG -> Processing FORGOT/RESET verification");
+        otpVerifiedForReset.put(email, true);
+
+    } else {
+        // This catches the "Access Denied" or 500 error if type is wrong
+        System.out.println("DEBUG -> ERROR: Unknown Type received: " + type);
+        throw new RuntimeException("Invalid OTP type: " + type);
+    }
+
+    clearOtp(email);
+    System.out.println("DEBUG -> Success!");
+    return "OTP verified successfully!";
+}
 
     // ================= LOGIN =================
 
@@ -256,26 +261,54 @@ public class AuthService {
 
     // ================= UPDATE PROFILE =================
 
-    public String updateProfile(UUID userId, UpdateProfileDTO dto) {
+   public String updateProfile(UUID userId, UpdateProfileDTO dto) {
+    Users user = repo.findById(userId)
+            .orElseThrow(() -> new RuntimeException("User not found"));
 
-        Users user = repo.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+    // 1. Basic Info (Always update)
+    user.setName(dto.getName());
+    user.setPhoneNo(dto.getPhoneNo());
+    user.setGender(dto.getGender());
+    user.setDateOfBirth(dto.getDateOfBirth());
+    user.setProfilePicUrl(dto.getProfilePicUrl());
 
-        user.setName(dto.getName());
-        user.setPhoneNo(dto.getPhoneNo());
-        user.setGender(dto.getGender());
-        user.setDateOfBirth(dto.getDateOfBirth());
-        user.setBloodGroup(dto.getBloodGroup());
-        user.setProfilePicUrl(dto.getProfilePicUrl());
-        user.setCollege(dto.getCollege());
-        user.setDepartment(dto.getDepartment());
-        user.setSpecialization(dto.getSpecialization());
+    // 2. Academic/Goal info
+    user.setCollege(dto.getCollege());
+    user.setUniversity(dto.getUniversity());
+    user.setDepartment(dto.getDepartment());
+    user.setTargetCourse(dto.getTargetCourse());
+    user.setCourseDuration(dto.getCourseDuration());
+    user.setDailyStudyHours(dto.getDailyStudyHours());
 
-        repo.save(user);
+    // 3. Mark completion based on role-specific logic
+    user.setComplete(isProfileFullyFilled(user));
 
-        return "Profile updated successfully!";
+    repo.save(user);
+    
+    // Return a more descriptive message based on state
+    return user.isComplete() ? "Profile complete!" : "Profile updated, but some required fields are missing.";
+}
+
+// Helper method to define what "Complete" means for Ai-Tut
+private boolean isProfileFullyFilled(Users user) {
+    // 1. Common required fields for both roles
+    boolean hasBaseInfo = user.getTargetCourse() != null && !user.getTargetCourse().isEmpty() &&
+                          user.getCourseDuration() != null && !user.getCourseDuration().isEmpty() &&
+                          user.getDailyStudyHours() != null && user.getDailyStudyHours() > 0;
+
+    // 2. Role-specific requirements
+    if (user.getRole() == Users.Role.STUDENT) {
+        // Students MUST have academic info
+        return hasBaseInfo && 
+               user.getCollege() != null && !user.getCollege().isEmpty() &&
+               user.getUniversity() != null && !user.getUniversity().isEmpty();
+    } else if (user.getRole() == Users.Role.INDIVIDUAL) {
+        // Individuals only need the base info
+        return hasBaseInfo;
     }
 
+    return false; // Default for TEACHER/ADMIN or unknown roles
+}
     // ================= GET USER =================
 
     public Users getUserById(UUID id) {
@@ -318,20 +351,19 @@ public class AuthService {
 
     // ================= COMMON METHODS =================
 
-    private AuthResponse createAuthResponse(Users user) {
+  private AuthResponse createAuthResponse(Users user) {
+    String accessToken = jwtService.generateToken(user.getEmail(), user.getId());
+    RefreshToken refreshToken = refreshTokenService.createRefreshtoken(user.getEmail(), user.getId());
 
-        String accessToken = jwtService.generateToken(user.getEmail(), user.getId());
-        RefreshToken refreshToken =
-                refreshTokenService.createRefreshtoken(user.getEmail(), user.getId());
-
-        return new AuthResponse(
-                accessToken,
-                refreshToken.getToken(),
-                user.getId().toString(),
-                user.getName(),
-                user.getRole().toString()
-        );
-    }
+    return AuthResponse.builder()
+            .accessToken(accessToken)
+            .refreshToken(refreshToken.getToken())
+            .id(user.getId().toString())
+            .name(user.getName())
+            .role(user.getRole().toString())
+            .isComplete(user.isComplete()) // <--- Don't forget this!
+            .build();
+}
 
     private void generateAndSendOtp(String email, String name, String subject) {
 

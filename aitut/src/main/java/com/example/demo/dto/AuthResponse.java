@@ -15,4 +15,5 @@ public class AuthResponse {
     private String id;   // This will hold the UUID as a String
     private String name;
     private String role;
+    private boolean isComplete;
 }

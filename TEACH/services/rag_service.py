@@ -16,17 +16,14 @@ embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 class RAGService:
 
     # ==============================
-    # 1️⃣ INGEST PDF
+    # 1️⃣ INGEST PDF (Added doc_type parameter)
     # ==============================
     @staticmethod
-    def ingest_pdf(file_path: str, subject: str):
+    def ingest_pdf(file_path: str, subject: str, doc_type: str = "notes"): # Added doc_type
         loader = PyPDFLoader(file_path)
         pages = loader.load()
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=100
-        )
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         chunks = splitter.split_documents(pages)
 
         collection = get_collection(subject)
@@ -34,98 +31,70 @@ class RAGService:
 
         for i, chunk in enumerate(chunks):
             try:
-                # Local Embedding
                 embedding = embedding_model.encode(chunk.page_content).tolist()
 
                 collection.add(
-                    ids=[f"{subject}_{i}"],
+                    ids=[f"{subject}_{doc_type}_{i}"], # Unique ID includes type
                     embeddings=[embedding],
                     documents=[chunk.page_content],
                     metadatas=[{
                         "source": file_path,
-                        "page": chunk.metadata.get("page", 0)
+                        "page": chunk.metadata.get("page", 0),
+                        "doc_type": doc_type  # <--- Added this metadata tag
                     }]
                 )
                 stored_count += 1
             except Exception as e:
-                print(f"Embedding failed for chunk {i}: {e}")
+                print(f"Embedding failed: {e}")
 
-        return f"Stored {stored_count} chunks successfully."
+        return f"Stored {stored_count} {doc_type} chunks successfully."
 
     # ==============================
-    # 2️⃣ QUESTION ANSWERING (Updated with History)
+    # 2️⃣ QUESTION ANSWERING (In-depth Prompt Added)
     # ==============================
     @staticmethod
     def get_teacher_response(question: str, subject: str, history: Optional[List] = None):
-        """
-        history: List of dictionaries e.g. [{"role": "user", "content": "..."}, ...]
-        """
         collection = get_collection(subject)
         
-
-        # Step 1: Embed question (LOCAL)
         try:
             q_embedding = embedding_model.encode(question).tolist()
-        except Exception as e:
-            return f"Embedding error: {str(e)}"
-
-        # Step 2: Query Chroma for context
-        try:
+            # Added "where" filter to only search within actual study notes
             results = collection.query(
                 query_embeddings=[q_embedding],
-                n_results=3
+                n_results=3,
+                where={"doc_type": "notes"} 
             )
-            documents = results.get("documents") if results else None
-            
-            if documents and len(documents) > 0 and documents[0]:
-                context = "\n\n".join(documents[0])
-            else:
-                context = "No relevant notes found in the uploaded PDF."
+            documents = results.get("documents")
+            context = "\n\n".join(documents[0]) if documents and documents[0] else "No relevant notes found."
         except Exception as e:
-            return f"Chroma query error: {str(e)}"
+            return f"Error: {str(e)}"
 
-        # Step 3: Build the Message List
-        # A. System Persona
-        system_prompt = """You are a patient and professional AI Tutor. 
-Explain topics using the provided context. If the answer isn't in the context, use your general knowledge but clarify it wasn't in the notes.
-Keep the student engaged. If they ask for a 'recap', use the conversation history to summarize.
-
-Follow this EXACT structure:
-## 🎓 Introduction
-(Brief overview)
-
-## 📘 Theory
-(Detailed explanation from the notes)
-
-## 💡 Examples
-(Use examples from notes or simple analogies)
-
-## 📝 Summary
-(Key takeaways in bullet points)
-"""
+        # --- THIS IS YOUR IN-DEPTH SYSTEM PROMPT ---
+        system_prompt = """You are a patient and professional AI Tutor for the Ai-Tut platform. 
+        Your goal is to help students understand complex engineering concepts.
+        
+        RULES:
+        1. Use the 'CONTEXT FROM NOTES' strictly to answer. 
+        2. If the answer isn't there, use your knowledge but mention it's outside the provided notes.
+        3. Break down complex math or logic step-by-step.
+        4. Use a supportive, encouraging tone.
+        
+        STRUCTURE YOUR OUTPUT:
+        ## 🎓 Concept Overview
+        ## 📘 Detailed Explanation
+        ## 💡 Practical Example
+        ## 📝 Key Takeaways (Bullet points)
+        """
 
         messages = [{"role": "system", "content": system_prompt}]
-
-        # B. Inject Previous Conversation History (The Memory)
         if history:
             messages.extend(history)
 
-        # C. Add current context + new question
-        user_content = f"CONTEXT FROM NOTES:\n{context}\n\nUSER QUESTION: {question}"
-        messages.append({"role": "user", "content": user_content})
+        messages.append({"role": "user", "content": f"CONTEXT FROM NOTES:\n{context}\n\nUSER QUESTION: {question}"})
 
-        # Step 4: Generate response with Groq
-        try:
-            chat_completion = groq_client.chat.completions.create(
-                messages=messages,  # type: ignore
-                model="llama-3.1-8b-instant",
-                temperature=0.3, # Low temperature for factual accuracy
-                max_tokens=2048
-            )
-
-            return chat_completion.choices[0].message.content
-
-        except Exception as e:
-            if "429" in str(e):
-                return "Error: Rate limit reached. Please wait a moment and try again."
-            return f"Generation error: {str(e)}"
+        chat_completion = groq_client.chat.completions.create(
+            messages=messages, # type: ignore
+            model="llama-3.1-8b-instant",
+            temperature=0.3
+        )
+        return chat_completion.choices[0].message.content

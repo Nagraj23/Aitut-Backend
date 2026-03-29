@@ -6,6 +6,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
+import java.security.PrivateKey;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -30,6 +31,8 @@ public class Users implements UserDetails {
     private String name;
     private String phoneNo;
 
+    private boolean isComplete = false;
+
     // Profile Fields
     private String gender;
     private LocalDate dateOfBirth;
@@ -39,14 +42,20 @@ public class Users implements UserDetails {
     // Academic Fields (only meaningful for STUDENT / TEACHER)
     private String college;
     private String department;
+    private String University;
     private String specialization;
+    private String TargetCourse;
+    private String CourseDuration; 
+    private Integer DailyStudyHours;
+
+    
 
     @Enumerated(EnumType.STRING)
     private Role role;
 
     private boolean verified;
 
-    public enum Role { STUDENT, TEACHER, ADMIN }
+    public enum Role { STUDENT, TEACHER, INDIVIDUAL , ADMIN }
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
