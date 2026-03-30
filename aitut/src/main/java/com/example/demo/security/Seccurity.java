@@ -2,6 +2,7 @@ package com.example.demo.security;
 
 import com.example.demo.repository.UsersRepo;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -18,39 +19,62 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 @Configuration
 @EnableWebSecurity
 @RequiredArgsConstructor
+@Slf4j
 public class Seccurity {
 
-    // Injecting the JWT Filter we created earlier
     private final JwtAuthFilter jwtAuthFilter;
+//    private Object outh2Login;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .csrf(csrf -> csrf.disable()) // Required for Postman testing
+                .csrf(csrf -> csrf.disable())
+                // 1. ADD THIS LINE TO ENABLE CORS
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/**").permitAll() // Public endpoints
-                        .anyRequest().authenticated() // Everything else needs a token
+                        .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/api/auth/auth/**").permitAll()
+                        .requestMatchers("/api/reminders/**").permitAll()
+                        .anyRequest().authenticated()
                 )
-                // This line makes sure your token is checked before anything else!
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+//                .oauth2Login(oAuth2->oAuth2.failureHandler(
+//                        ((request, response, exception) -> {
+//                            log.error(exception.getMessage());
+//                        })
+//                ));
+//        .outh2Login
 
         return http.build();
     }
 
-    // Tells Spring how to find a user in PostgreSQL for JWT validation
+    // 2. ADD THIS BEAN TO DEFINE CORS RULES
+    @Bean
+    public org.springframework.web.cors.CorsConfigurationSource corsConfigurationSource() {
+        org.springframework.web.cors.CorsConfiguration configuration = new org.springframework.web.cors.CorsConfiguration();
+
+        // Allow your React frontend URL
+        configuration.setAllowedOrigins(java.util.List.of("http://localhost:5173", "http://localhost:3000"));
+        configuration.setAllowedMethods(java.util.List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(java.util.List.of("Authorization", "Content-Type"));
+        configuration.setAllowCredentials(true);
+
+        org.springframework.web.cors.UrlBasedCorsConfigurationSource source = new org.springframework.web.cors.UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
+    }
+
     @Bean
     public UserDetailsService userDetailsService(UsersRepo repo) {
         return email -> repo.findByEmail(email)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + email));
     }
 
-    // Required for the Login process in AuthService
     @Bean
     public AuthenticationManager authManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();
     }
 
-    // Securely hashes passwords before saving to DB
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();

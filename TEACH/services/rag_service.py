@@ -1,37 +1,29 @@
-from google import genai
+import time
+from groq import Groq 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 from core.config import get_settings
 from db.chroma_db import get_collection
+from typing import List, Optional
 
 settings = get_settings()
+groq_client = Groq(api_key=settings.GROQ_API_KEY)
 
-# Gemini client (ONLY for generation)
-client = genai.Client(
-    api_key=settings.GEMINI_API_KEY,
-    http_options={"api_version": "v1"}
-)
-
-# Local embedding model (FREE + STABLE)
+# Local embedding model (STABLE & FREE)
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-
 
 class RAGService:
 
     # ==============================
-    # 1️⃣ INGEST PDF
+    # 1️⃣ INGEST PDF (Added doc_type parameter)
     # ==============================
     @staticmethod
-    def ingest_pdf(file_path: str, subject: str):
-
+    def ingest_pdf(file_path: str, subject: str, doc_type: str = "notes"): # Added doc_type
         loader = PyPDFLoader(file_path)
         pages = loader.load()
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=100
-        )
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         chunks = splitter.split_documents(pages)
 
         collection = get_collection(subject)
@@ -39,82 +31,70 @@ class RAGService:
 
         for i, chunk in enumerate(chunks):
             try:
-                # 🔥 LOCAL EMBEDDING (NO GEMINI)
-                embedding = embedding_model.encode(
-                    chunk.page_content
-                ).tolist()
+                embedding = embedding_model.encode(chunk.page_content).tolist()
 
                 collection.add(
-                    ids=[f"{subject}_{i}"],
+                    ids=[f"{subject}_{doc_type}_{i}"], # Unique ID includes type
                     embeddings=[embedding],
                     documents=[chunk.page_content],
                     metadatas=[{
                         "source": file_path,
-                        "page": chunk.metadata.get("page")
+                        "page": chunk.metadata.get("page", 0),
+                        "doc_type": doc_type  # <--- Added this metadata tag
                     }]
                 )
-
                 stored_count += 1
-
             except Exception as e:
-                print(f"Embedding failed for chunk {i}: {e}")
+                print(f"Embedding failed: {e}")
 
-        return f"Stored {stored_count} chunks successfully."
+        return f"Stored {stored_count} {doc_type} chunks successfully."
 
     # ==============================
-    # 2️⃣ QUESTION ANSWERING
+    # 2️⃣ QUESTION ANSWERING (In-depth Prompt Added)
     # ==============================
     @staticmethod
-    def get_teacher_response(question: str, subject: str):
-
+    def get_teacher_response(question: str, subject: str, history: Optional[List] = None):
         collection = get_collection(subject)
-
-        # Step 1: Embed question (LOCAL)
+        
         try:
             q_embedding = embedding_model.encode(question).tolist()
-
-        except Exception as e:
-            return f"Embedding error: {str(e)}"
-
-        # Step 2: Query Chroma
-        try:
+            # Added "where" filter to only search within actual study notes
             results = collection.query(
                 query_embeddings=[q_embedding],
-                n_results=3
+                n_results=3,
+                where={"doc_type": "notes"} 
             )
-
-            documents = results.get("documents") if results else None
-
-            if documents and len(documents) > 0 and documents[0]:
-                context = "\n\n".join(documents[0])
-            else:
-                context = "No relevant notes found."
-
+            documents = results.get("documents")
+            context = "\n\n".join(documents[0]) if documents and documents[0] else "No relevant notes found."
         except Exception as e:
-            return f"Chroma query error: {str(e)}"
+            return f"Error: {str(e)}"
 
-        # Step 3: Build prompt
-        prompt = f"""
-You are a patient teacher.
+        # --- THIS IS YOUR IN-DEPTH SYSTEM PROMPT ---
+        system_prompt = """You are a patient and professional AI Tutor for the Ai-Tut platform. 
+        Your goal is to help students understand complex engineering concepts.
+        
+        RULES:
+        1. Use the 'CONTEXT FROM NOTES' strictly to answer. 
+        2. If the answer isn't there, use your knowledge but mention it's outside the provided notes.
+        3. Break down complex math or logic step-by-step.
+        4. Use a supportive, encouraging tone.
+        
+        STRUCTURE YOUR OUTPUT:
+        ## 🎓 Concept Overview
+        ## 📘 Detailed Explanation
+        ## 💡 Practical Example
+        ## 📝 Key Takeaways (Bullet points)
+        """
 
-Context:
-{context}
+        messages = [{"role": "system", "content": system_prompt}]
+        if history:
+            messages.extend(history)
 
-Question:
-{question}
+        messages.append({"role": "user", "content": f"CONTEXT FROM NOTES:\n{context}\n\nUSER QUESTION: {question}"})
 
-Explain clearly in simple words.
-Use tables if needed.
-"""
-
-        # Step 4: Generate response (Gemini 2.5 Flash)
-        try:
-            response = client.models.generate_content(
-                model=settings.CHAT_MODEL,
-                contents=prompt
-            )
-
-            return response.text if response.text else "No response."
-
-        except Exception as e:
-            return f"Generation error: {str(e)}"
+        chat_completion = groq_client.chat.completions.create(
+            messages=messages, # type: ignore
+            model="llama-3.1-8b-instant",
+            temperature=0.3
+        )
+        return chat_completion.choices[0].message.content

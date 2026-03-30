@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 
 import java.security.Key;
 import java.util.Date;
+import java.util.UUID;
 
 @Service
 public class JWTService {
@@ -14,9 +15,10 @@ public class JWTService {
     private final String SECRET = "fcac35f0013bd448bd10a736ef73a6e125aa9d585aef1bc01a01b210c9ddefb2";
     private final long EXPIRATION = 1000 * 60 * 60 * 24; // 24 hours
 
-    public String generateToken(String username) {
+    public String generateToken(String username , UUID userId) {
         return Jwts.builder()
                 .setSubject(username)
+                .claim("userId", userId)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION))
                 .signWith(getSignKey(), SignatureAlgorithm.HS256)

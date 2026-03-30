@@ -10,8 +10,10 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @Builder
 public class AuthResponse {
-    private String token;
+    private String accessToken;  // The short JWT
+    private String refreshToken;
     private String id;   // This will hold the UUID as a String
     private String name;
     private String role;
+    private boolean isComplete;
 }

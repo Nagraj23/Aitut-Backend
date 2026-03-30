@@ -8,4 +8,5 @@ import lombok.*;
 public class OtpVerifyRequest {
     private String email;
     private String otp;
+    private String type;
 }

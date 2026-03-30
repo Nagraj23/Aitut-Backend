@@ -1,0 +1,31 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+venv/
+ENV/
+
+# --- Django ---
+db.sqlite3
+db.sqlite4
+*.log
+local_settings.py
+media/
+staticfiles/
+
+# --- Databases ---
+# (If you ever export Postgres data to a file)
+*.sql
+*.dump
+
+# --- IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+.DS_Store
+Thumbs.db
