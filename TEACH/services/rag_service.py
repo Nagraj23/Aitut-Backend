@@ -61,8 +61,8 @@ class RAGService:
             # Added "where" filter to only search within actual study notes
             results = collection.query(
                 query_embeddings=[q_embedding],
-                n_results=3,
-                where={"doc_type": "notes"} 
+               n_results=5, # Increased to 5 for better context
+               where={"$or": [{"doc_type": "notes"}, {"doc_type": "syllabus"}]}
             )
             documents = results.get("documents")
             context = "\n\n".join(documents[0]) if documents and documents[0] else "No relevant notes found."

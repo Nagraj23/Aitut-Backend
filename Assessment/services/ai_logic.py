@@ -2,11 +2,42 @@ import json
 from groq import Groq
 from django.conf import settings
 from db.models import UserKnowledgeGraph
+import chromadb
+from django.conf import settings
 
 # Initialize Groq Client
+chroma_client = chromadb.PersistentClient(path=settings.CHROMA_DB_PATH)
+
 client = Groq(api_key=settings.GROQ_API_KEY)
 MODEL_NAME = "llama-3.1-8b-instant"
 
+def get_syllabus_from_chroma(subject_id):
+    """
+    Helper to fetch syllabus structure from the Teach Service's Vector DB.
+    """
+    try:
+        # 1. Get the collection for the specific subject
+        collection = chroma_client.get_collection(name=subject_id)
+
+        # 2. Query for the syllabus structure
+        # We search specifically for metadata where doc_type is 'syllabus'
+        results = collection.query(
+            query_texts=["List all units, chapters, and main topics in order"],
+            n_results=15, 
+            where={"doc_type": "syllabus"} 
+        )
+
+        # 3. Join the results into a clean string for the LLM
+        if results['documents'] and len(results['documents'][0]) > 0:
+            syllabus_context = "\n".join(results['documents'][0])
+            return syllabus_context
+        else:
+            return "No syllabus content found for this subject."
+
+    except Exception as e:
+        print(f"Error fetching from ChromaDB: {str(e)}")
+        return "Error retrieving syllabus structure."
+    
 def generate_diagnostic(domain, university, day_number, previous_loopholes=None):
     """
     Generates a 10-question test. 
@@ -117,62 +148,83 @@ def evaluate_answer(question, student_answer):
     except Exception as e:
         raise ValueError(f"Evaluation failed: {str(e)}")
     
-def generate_deep_roadmap(user_id, user_preferences):
+def generate_deep_roadmap(user_id, user_preferences, role="individual", subject_id=None):
     """
-    Generates a personalized learning path based on 7-day diagnostic results.
-    user_preferences: dict containing 'daily_hours', 'total_days', 'goal'
+    UPDATED: Now includes a check for 'student' role to fetch from ChromaDB.
+    'individual' logic remains strictly as you provided.
     """
-    # from .models import UserKnowledgeGraph # Import your master profile model
-    
-    # 1. Fetch the user's diagnostic summary
-    graph = UserKnowledgeGraph.objects.get(spring_user_id=user_id)
-    
     client = Groq(api_key=settings.GROQ_API_KEY)
     
-    # 2. Craft the "Deep" Roadmap Prompt
-    prompt = f"""
-    You are a Senior Technical Architect and Mentor. 
-    Create a highly personalized, deep learning roadmap for a student based on a 7-day diagnostic.
+    # --- STUDENT ROLE LOGIC (NEW) ---
+    if role == "student":
+        # Call your Teach Service / ChromaDB helper here
+        syllabus_context = get_syllabus_from_chroma(subject_id)
+        # syllabus_context = get_syllabus_from_chroma(subject_id) 
+        prompt = f"""
+        You are a Senior Technical Architect and Mentor. 
+        Create a university-aligned roadmap for a student.
 
-    STUDENT DATA:
-    - Domain: {graph.domain}
-    - Critical Loopholes (Repeated Failures): {graph.critical_loopholes}
-    - Mastered Concepts (Skip these): {graph.mastery_scores}
-    - Primary Error Type: {graph.top_error_type} (Tailor content to fix this)
+        SYLLABUS DATA:
+        {syllabus_context}
+        
+        LOGISTICS:
+        - Target Goal: {user_preferences.get('goal')}
+        - Roadmap Duration: {user_preferences.get('total_days')} days
+
+        ROADMAP STRUCTURE RULES:
+        1. Follow the syllabus units linearly. 
+        2. Provide specific technical tasks based on the university chapters.
+        3. No conversational filler. Output ONLY valid JSON.
+        
+        (Use the same JSON structure as below)
+        """
     
-    LOGISTICS:
-    - Target Goal: {user_preferences.get('goal')}
-    - Daily Commitment: {user_preferences.get('daily_hours')} hours/day
-    - Roadmap Duration: {user_preferences.get('total_days')} days
+    # --- INDIVIDUAL ROLE LOGIC (STRICTLY YOUR ORIGINAL CODE) ---
+    else:
+        graph = UserKnowledgeGraph.objects.get(spring_user_id=user_id)
+        prompt = f"""
+        You are a Senior Technical Architect and Mentor. 
+        Create a highly personalized, deep learning roadmap for a student based on a 7-day diagnostic.
 
-    ROADMAP STRUCTURE RULES:
-    1. Phase 1 (Remediation): Spend the first 20% of time strictly fixing the "Critical Loopholes".
-    2. Phase 2 (Progression): Move into advanced topics the student hasn't mastered yet.
-    3. Phase 3 (Application): Design a final project syllabus aligned with their 'Goal'.
-    4. Provide specific technical tasks, not just titles.
-    5. No conversational filler. Output ONLY valid JSON.
+        STUDENT DATA:
+        - Domain: {graph.domain}
+        - Critical Loopholes (Repeated Failures): {graph.critical_loopholes}
+        - Mastered Concepts (Skip these): {graph.mastery_scores}
+        - Primary Error Type: {graph.top_error_type} (Tailor content to fix this)
+        
+        LOGISTICS:
+        - Target Goal: {user_preferences.get('goal')}
+        - Daily Commitment: {user_preferences.get('daily_hours')} hours/day
+        - Roadmap Duration: {user_preferences.get('total_days')} days
 
-    OUTPUT FORMAT:
-    {{
-        "title": "...",
-        "overview": "...",
-        "phases": [
-            {{
-                "name": "Phase Name",
-                "days": "Day 1-X",
-                "focus": "...",
-                "daily_plan": [
-                    {{ "day": 1, "topic": "...", "task": "...", "depth": "Beginner|DeepDive" }}
-                ]
-            }}
-        ],
-        "final_project_idea": "..."
-    }}
-    """
+        ROADMAP STRUCTURE RULES:
+        1. Phase 1 (Remediation): Spend the first 20% of time strictly fixing the "Critical Loopholes".
+        2. Phase 2 (Progression): Move into advanced topics the student hasn't mastered yet.
+        3. Phase 3 (Application): Design a final project syllabus aligned with their 'Goal'.
+        4. Provide specific technical tasks, not just titles.
+        5. No conversational filler. Output ONLY valid JSON.
+
+        OUTPUT FORMAT:
+        {{
+            "title": "...",
+            "overview": "...",
+            "phases": [
+                {{
+                    "name": "Phase Name",
+                    "days": "Day 1-X",
+                    "focus": "...",
+                    "daily_plan": [
+                        {{ "day": 1, "topic": "...", "task": "...", "depth": "Beginner|DeepDive" }}
+                    ]
+                }}
+            ],
+            "final_project_idea": "..."
+        }}
+        """
 
     try:
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
