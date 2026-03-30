@@ -17,3 +17,6 @@ venv/
 
 # Other
 *.log
+
+*.sqlite3
+chroma_data/
