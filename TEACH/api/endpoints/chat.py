@@ -1,4 +1,6 @@
 import os
+from fastapi import Form, File, UploadFile
+import shutil
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -12,58 +14,69 @@ router = APIRouter()
 class QuestionRequest(BaseModel):
     question: str
 
-@router.post("/upload/{dept}/{year}/{subject_name}")
+@router.post("/upload/{uni}/{dept}/{year}/{subject_name}")
 async def upload_pdf(
+    uni: str, 
     dept: str, 
     year: int, 
     subject_name: str, 
-    doc_type: str = "notes", 
+   doc_type: str = Form("notes"),
     file: UploadFile = File(...), 
     db: Session = Depends(get_db)
 ):
+    # 1. Standardize IDs
     clean_subject = subject_name.strip().lower().replace(" ", "_")
-    vector_id = f"{dept}_{year}_{clean_subject}".lower().replace(" ", "_")
-
-    dir_path = f"data/{dept}/year_{year}/{vector_id}"
-    os.makedirs(dir_path, exist_ok=True)
-    
-    # Fix for the "os.path.join" red line
+    vector_id = f"{uni}_{dept}_{year}_{clean_subject}".lower()
     safe_filename = str(file.filename) if file.filename else "file.pdf"
-    file_path = os.path.join(dir_path, safe_filename)
-    
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
 
-    # Database Registration
-    department = db.query(models.Department).filter(models.Department.id == dept.lower()).first()
-    if not department:
-        department = models.Department(id=dept.lower(), name=dept.upper())
-        db.add(department)
-        db.commit()
+    # 2. Auto-Detect Syllabus (Fixes your previous roadmap bug)
+    final_doc_type = doc_type.lower()
+    if "syllabus" in safe_filename.lower():
+        final_doc_type = "syllabus"
 
+    # --- SQL REGISTRATION (The "Librarian") ---
+    # Check if subject exists, if not, create it
     subj = db.query(models.Subject).filter(models.Subject.vector_collection == vector_id).first()
+    
     if not subj:
         subj = models.Subject(
-            dept_id=dept.lower(), 
-            year=year, 
-            name=clean_subject, 
+            name=clean_subject,
+            university=uni.lower(),
+            branch=dept.lower(),
+            year=year,
             vector_collection=vector_id
         )
         db.add(subj)
         db.commit()
         db.refresh(subj)
 
-    status = RAGService.ingest_pdf(file_path, vector_id, doc_type=doc_type)
+    # 3. Save physical file to disk
+    dir_path = f"data/{dept}/year_{year}/{vector_id}"
+    os.makedirs(dir_path, exist_ok=True)
+    file_path = os.path.join(dir_path, safe_filename)
+    
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+
+    # --- CHROMA INGESTION (The "Bookshelf") ---
+    status = RAGService.ingest_pdf(
+        file_path=file_path,
+        university=uni,
+        branch=dept,
+        year=year,
+        subject=clean_subject,
+        doc_type=final_doc_type
+    )
     
     return {
         "status": status, 
         "subject_id": subj.id, 
-        "collection_name": vector_id,
-        "type": doc_type
+        "type_assigned": final_doc_type
     }
-
-@router.post("/ask/{dept}/{year}/{subject_name}/{day}")
+    
+@router.post("/ask/{uni}/{dept}/{year}/{subject_name}/{day}")
 async def ask_teacher(
+    uni:str,
     dept: str, 
     year: int, 
     subject_name: str, 
@@ -71,8 +84,14 @@ async def ask_teacher(
     request: QuestionRequest, 
     db: Session = Depends(get_db)
 ):
+    # university = "dbatu"
     clean_name = subject_name.strip().lower().replace(" ", "_")
 
+    print(f"--- DEBUGGING SQL SEARCH ---")
+    print(f"Target Dept ID: {dept.lower()}")
+    print(f"Target Year: {year}")
+    print(f"Target Subject Name: {clean_name}")
+    
     subj = db.query(models.Subject).filter(
         models.Subject.dept_id == dept.lower(),
         models.Subject.year == year,
@@ -82,6 +101,7 @@ async def ask_teacher(
     if not subj:
         raise HTTPException(status_code=404, detail="Subject not found")
 
+    # Handle Chat Session
     session = db.query(models.ChatSession).filter(
         models.ChatSession.subject_id == subj.id,
         models.ChatSession.day_number == day
@@ -93,19 +113,24 @@ async def ask_teacher(
         db.commit()
         db.refresh(session)
 
+    # Get Chat History
     history_objs = db.query(models.Message).filter(
         models.Message.session_id == session.id
     ).order_by(models.Message.timestamp.desc()).limit(6).all()
     
     chat_context = [{"role": m.role, "content": m.content} for m in reversed(history_objs)]
 
-    # Fix for the Groq "messages" red line
+    # UPDATED CALL: Pass the full hierarchy to get_teacher_response
     answer = RAGService.get_teacher_response(
         question=request.question, 
-        subject=subj.vector_collection, # type: ignore
+        university=uni,
+        branch=dept,
+        year=year,
+        subject=clean_name,
         history=chat_context 
     )
 
+    # Save to DB
     db.add(models.Message(session_id=session.id, role="user", content=request.question))
     db.add(models.Message(session_id=session.id, role="assistant", content=answer))
     db.commit()

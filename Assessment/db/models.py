@@ -40,7 +40,8 @@ class UserKnowledgeGraph(models.Model):
 class Roadmap(models.Model):
     """Stores the actual learning plan generated on Day 8"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    knowledge_graph = models.ForeignKey(UserKnowledgeGraph, on_delete=models.CASCADE)
+    knowledge_graph = models.ForeignKey(UserKnowledgeGraph, on_delete=models.CASCADE,null=True, 
+        blank=True)
     spring_user_id = models.CharField(max_length=255)
     title = models.CharField(max_length=255)
     overview = models.TextField()

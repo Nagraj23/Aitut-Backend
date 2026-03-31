@@ -153,60 +153,65 @@ class SubmitAnswersView(APIView):
 # 3️⃣ Generate Roadmap (Day 8)
 # ─────────────────────────────────────────────
 class GenerateRoadmapView(APIView):
-    permission_classes = [IsAuthenticated]
-
     def post(self, request):
-        # 1. Force ID to string to match the CharField in Postgres
-        user_id = str(request.user.id) 
+        user_id = str(request.user.id)
+        role = request.data.get('role', 'student').lower()
         domain = request.data.get('domain')
-        
+        subject_id = request.data.get('subject_id') # e.g., solapur_cse_1_physics
+
+        # --- CRITICAL FIX: VALIDATION ---
+        if role == 'student' and not subject_id:
+            return Response({
+                "error": "Missing subject_id. Student roadmaps require a valid syllabus ID."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         user_preferences = {
-            "daily_hours": request.data.get('daily_hours'),
-            "total_days": request.data.get('total_days'),
-            "goal": request.data.get('goal')
+            "daily_hours": request.data.get('daily_hours', 2),
+            "total_days": request.data.get('total_days', 60),
+            "goal": request.data.get('goal', "Pass Exam"),
         }
 
         try:
-            # 2. Use __iexact for the domain to prevent case-sensitivity issues
-            graph = UserKnowledgeGraph.objects.get(
+            # 1. Generate the JSON via AI
+            roadmap_data = generate_deep_roadmap(
+                user_id, 
+                user_preferences, 
+                role=role, 
+                subject_id=subject_id
+            )
+
+            # 2. Get/Create Knowledge Graph (Optional for students)
+            graph = UserKnowledgeGraph.objects.filter(
                 spring_user_id=user_id, 
                 domain__iexact=domain
-            )
-            
-            if not graph.is_ready_for_roadmap:
-                return Response({"error": "Onboarding not complete. Please finish 7 days."}, status=403)
+            ).first()
 
-            # 3. Generate the Roadmap via AI
-            roadmap_data = generate_deep_roadmap(user_id, user_preferences)
-
-            # 4. SAVE the Roadmap so it persists in the database
+            # 3. Save to SQL
             roadmap_obj = Roadmap.objects.create(
                 knowledge_graph=graph,
                 spring_user_id=user_id,
-                title=roadmap_data.get("title", f"{domain} Mastery Path"),
+                title=roadmap_data.get("title", f"{subject_id} Roadmap"),
                 overview=roadmap_data.get("overview", ""),
-                full_data=roadmap_data # Saving the whole JSON
+                full_data=roadmap_data
             )
-            
-            # 5. Optional: Save individual tasks if you want to track them
-            days = roadmap_data.get("daily_plan", [])
-            for day in days:
-                RoadmapTask.objects.create(
+
+            # 4. Save Tasks
+            tasks = roadmap_data.get("daily_plan", [])
+            RoadmapTask.objects.bulk_create([
+                RoadmapTask(
                     roadmap=roadmap_obj,
-                    day_number=day.get("day"),
-                    phase_name=day.get("phase", "Learning"),
-                    topic=day.get("topic", ""),
-                    task_description=day.get("task", ""),
-                    depth=day.get("depth", "DeepDive")
-                )
+                    day_number=t.get("day"),
+                    phase_name=t.get("type", "Learning"),
+                    topic=t.get("topic", ""),
+                    task_description=t.get("task", "")
+                ) for t in tasks
+            ])
 
             return Response({
-                "message": "Roadmap generated and saved successfully!",
+                "message": "Roadmap synced with syllabus!",
                 "roadmap_id": roadmap_obj.id,
                 "data": roadmap_data
             }, status=status.HTTP_201_CREATED)
 
-        except UserKnowledgeGraph.DoesNotExist:
-            return Response({
-                "error": f"Knowledge graph not found for User {user_id} and Domain {domain}."
-            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
