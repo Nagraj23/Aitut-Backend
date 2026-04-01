@@ -4,7 +4,7 @@ from .models import Base
 
 # Change this to your actual Postgres credentials
 # Replace Nagraj@2005 with Nagraj%402005
-DATABASE_URL = "postgresql://postgres:Nagraj%402005@localhost:5432/Aitut"
+DATABASE_URL = "postgresql://postgres:root123@localhost:5432/Aitute"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
