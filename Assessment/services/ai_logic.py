@@ -154,59 +154,53 @@ def evaluate_answer(question, student_answer):
         raise ValueError(f"Evaluation failed: {str(e)}")
     
 def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=None, phase_number=1):
-    """
-    Generates a structured learning roadmap using Groq LLM.
-    Phase 1: Units 1-3 | Phase 2: Units 4-6
-    Ensures 7-8 days of pure learning per chapter for 95%+ coverage.
-    """
+    # Using Llama 3.3 70B for better reasoning and larger output limit
     client = Groq(api_key=settings.GROQ_API_KEY)
     
     if role == "student":
         goal = user_preferences.get('goal', 'Complete syllabus mastery')
-        
-        # We still keep this variable to help the prompt, 
-        # even if we don't filter Chroma by it.
         target_unit_names = "Units 1, 2, and 3" if phase_number == 1 else "Units 4, 5, and 6"
         
-        # Fetch the full syllabus (top 25 chunks)
+        # Fetching context (Ensure n_results is high enough)
         syllabus_context = get_syllabus_from_chroma(subject_id, user_goal=goal)
         
         if not syllabus_context:
             raise ValueError(f"Could not retrieve context for {subject_id}")
 
-        # THE REFACTORED "SMART-SPLIT" PROMPT
+        # --- THE UPDATED STRICT PROMPT ---
         prompt = f"""
-        You are a Senior Academic Mentor. I am providing the FULL SYLLABUS below.
-        Your goal is to generate ONLY PHASE {phase_number} of a 60-day roadmap.
-
+        You are a Senior Academic Mentor. Generate a PURE JSON roadmap for PHASE {phase_number}.
+        
         SYLLABUS DATA:
         \"\"\"{syllabus_context}\"\"\"
 
-        --- PHASE INSTRUCTIONS ---
-        - You are currently generating: PHASE {phase_number}.
-        - TARGET TOPICS: If phase=1, focus ONLY on the topics in {target_unit_names}. 
-        - If phase=2, focus ONLY on the remaining units (Unit 4, 5, and 6), specifically including Nanotechnology and Carbon Nanotubes (CNT).
+        --- PHASE CONFIGURATION ---
+        - CURRENT PHASE: Phase {phase_number}
+        - TARGET UNITS: {target_unit_names}
+        - TOTAL DURATION: Exactly 25 Days.
 
-        --- DYNAMIC ALLOCATION RULES ---
-        1. CHAPTER DEPTH: Allocate 7 to 8 days of PURE LEARNING for each unit in THIS phase.
-        2. EXCLUSION: Mon-Fri for learning. Saturdays (Test) and Sundays (Revision) are ADDITIONAL.
-        3. 95% COVERAGE: Break down every sub-topic, derivation, and application mentioned for these specific units.
-
-        --- MANDATORY WEEKLY STRUCTURE ---
-        - Mon-Fri: Daily learning tasks based on syllabus.
-        - SATURDAY: Topic: "Weekly Assessment Test" | Type: "Test"
-        - SUNDAY: Topic: "Revision & Backlog Clear" | Type: "Free"
+        --- STRICT ALLOCATION RULES (DO NOT DEVIATE) ---
+        1. PURE LEARNING: For EACH of the 3 Units, allocate STRICTLY 6 days of "Learning" or "Problem Solving" (Mon-Fri + the following Mon).
+        2. NO COMPRESSION: Every sub-topic, derivation, and numerical mentioned in the SYLLABUS DATA must have its own dedicated day.
+        3. WEEKLY STRUCTURE:
+           - Days 1-5: Learning (Unit 1)
+           - Day 6: Weekly Assessment Test (Type: "Test")
+           - Day 7: Revision & Backlog Clear (Type: "Free")
+           - Days 8: Learning (Finish Unit 1)
+           - Days 9-12: Learning (Unit 2)... continue this pattern.
+        4. NANOTECHNOLOGY: {'If Phase 2, Unit 6 (Carbon Nanotubes/CNT) must span at least 6 detailed days.' if phase_number == 2 else ''}
 
         --- OUTPUT FORMAT (JSON ONLY) ---
+        Return ONLY a JSON object. No conversational filler.
         {{
             "phase": {phase_number},
             "title": "Phase {phase_number}: {'Foundations' if phase_number == 1 else 'Advanced Applications'}",
             "daily_plan": [
                 {{ 
-                "day": {'1' if phase_number == 1 else '31'}, 
-                "topic": "Unit/Sub-topic Name", 
-                "task": "Learning objective", 
-                "type": "Learning|Problem Solving|Test|Free" 
+                  "day": {'1' if phase_number == 1 else '31'}, 
+                  "topic": "Unit X: Specific Sub-topic", 
+                  "task": "Step-by-step learning objective including derivations", 
+                  "type": "Learning|Problem Solving|Test|Free" 
                 }}
             ]
         }}
@@ -215,15 +209,37 @@ def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=
         try:
             response = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                model="llama3-70b-8192",
+                model="llama-3.3-70b-versatile", # Switched to 3.3 for larger context/output
+                temperature=0.3, # Slightly higher for better task breakdown
+                response_format={"type": "json_object"}
+            )
+            
+            content = response.choices[0].message.content
+            return json.loads(content) if content else None
+
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            return None
+
+        try:
+            response = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+               model="llama-3.3-70b-versatile",
                 temperature=0.2,
                 response_format={"type": "json_object"}
             )
             
-            return json.loads(response.choices[0].message.content)
+            # Extract content safely
+            content = response.choices[0].message.content
+            
+            if content:
+                return json.loads(content)
+            else:
+                print(f"⚠️ Phase {phase_number}: API returned empty content.")
+                return None
 
         except Exception as e:
-            print(f"Error generating phase {phase_number}: {e}")
+            print(f"❌ Error generating phase {phase_number}: {e}")
             return None
     
     # 2. PATH B: INDIVIDUAL (DIAGNOSTIC-BASED)
