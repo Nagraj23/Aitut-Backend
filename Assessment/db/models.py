@@ -24,7 +24,7 @@ class UserKnowledgeGraph(models.Model):
     spring_user_id = models.CharField(max_length=255) # Removed unique=True here
     domain = models.CharField(max_length=100)
     university = models.CharField(max_length=255, null=True, blank=True)
-    
+    title = models.CharField(max_length=255, null=True, blank=True)
     mastery_scores = models.JSONField(default=dict) 
     critical_loopholes = models.JSONField(default=list) 
     top_error_type = models.CharField(max_length=50) 
@@ -34,7 +34,6 @@ class UserKnowledgeGraph(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        # Fixed: This is where the unique constraint belongs
         unique_together = (('spring_user_id', 'domain'),)
 
 class Roadmap(models.Model):

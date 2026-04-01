@@ -1,7 +1,7 @@
 import json
 from groq import Groq
 from django.conf import settings
-from db.models import UserKnowledgeGraph,Roadmap
+from db.models import UserKnowledgeGraph,Roadmap,RoadmapTask
 # from .config import get_settings
 from django.conf import settings
 # from core.settings import get_setting
@@ -221,26 +221,6 @@ def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=
             print(f"❌ Error: {e}")
             return None
 
-        try:
-            response = client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-               model="llama-3.3-70b-versatile",
-                temperature=0.2,
-                response_format={"type": "json_object"}
-            )
-            
-            # Extract content safely
-            content = response.choices[0].message.content
-            
-            if content:
-                return json.loads(content)
-            else:
-                print(f"⚠️ Phase {phase_number}: API returned empty content.")
-                return None
-
-        except Exception as e:
-            print(f"❌ Error generating phase {phase_number}: {e}")
-            return None
     
     # 2. PATH B: INDIVIDUAL (DIAGNOSTIC-BASED)
     else:
@@ -305,3 +285,43 @@ def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=
     except Exception as e:
         # Catching everything from JSON errors to API timeouts
         raise ValueError(f"Roadmap Generation Failed: {str(e)}")
+    
+def get_existing_roadmap_data(user_id):
+    """
+    Fetches the latest roadmap and its tasks from the DB 
+    and reconstructs the JSON format for the mobile frontend.
+    """
+    try:
+        # 1. Get the most recent roadmap object
+        roadmap_obj = Roadmap.objects.filter(
+            spring_user_id=user_id
+        ).order_by('-id').first()
+
+        if not roadmap_obj:
+            return None
+
+        # 2. Fetch all tasks associated with this roadmap
+        tasks = RoadmapTask.objects.filter(roadmap=roadmap_obj).order_by('day_number')
+
+        # 3. Reconstruct the daily_plan list
+        daily_plan = []
+        for task in tasks:
+            daily_plan.append({
+                "day": task.day_number,
+                "topic": task.topic,
+                "task": task.task_description,
+                "type": task.phase_name  # Learning, Test, etc.
+            })
+
+        # 4. Return formatted response (matches what GenerateDeepRoadmap creates)
+        return {
+            "roadmap_id": roadmap_obj.id,
+            "title": roadmap_obj.title,
+            "overview": roadmap_obj.overview,
+            "progress": getattr(roadmap_obj, 'progress', 0), # Uses progress if field exists
+            "daily_plan": daily_plan
+        }
+
+    except Exception as e:
+        print(f"Error fetching roadmap: {e}")
+        return None

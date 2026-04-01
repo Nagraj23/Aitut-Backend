@@ -5,11 +5,8 @@ import json
 from rest_framework.permissions import IsAuthenticated
 
 from db.models import Assessment, DailySWOT, UserKnowledgeGraph ,RoadmapTask ,Roadmap
-from services.ai_logic import generate_diagnostic, evaluate_answer, generate_deep_roadmap
+from services.ai_logic import generate_diagnostic, evaluate_answer, generate_deep_roadmap,get_existing_roadmap_data
 
-# ─────────────────────────────────────────────
-# 1️⃣ Generate Diagnostic Test
-# ─────────────────────────────────────────────
 class GenerateTestView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -52,9 +49,6 @@ class GenerateTestView(APIView):
             "questions": assessment.questions
         })
 
-# ─────────────────────────────────────────────
-# 2️⃣ Submit Answers & Generate SWOT
-# ─────────────────────────────────────────────
 class SubmitAnswersView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -149,34 +143,58 @@ class SubmitAnswersView(APIView):
 
         return Response({"status": "Success", "onboarding_finished": completed_count >= 7}, status=201)
 
-# ─────────────────────────────────────────────
-# 3️⃣ Generate Roadmap (Day 8)
-# ─────────────────────────────────────────────
 class GenerateRoadmapView(APIView):
     def post(self, request):
-        user_id = str(request.user.id)
+        # 1. EXTRACT DATA FROM YOUR JSON PAYLOAD
+        user_id = request.data.get('user_id')
         role = request.data.get('role', 'student').lower()
+        subject_id = request.data.get('subject_id')
         domain = request.data.get('domain')
-        subject_id = request.data.get('subject_id') 
-        
-        # --- PHASE HANDLING ---
-        # Default to Phase 1 (Days 1-30) if not specified
         phase = int(request.data.get('phase', 1))
+        
+        # Gatekeeper variables from Spring
+        is_complete = request.data.get('is_complete', False)
+        daily_hours = request.data.get('daily_hours')
+        goal = request.data.get('goal')
 
-        # --- VALIDATION ---
-        if role == 'student' and not subject_id:
+        # 2. VALIDATION GATES
+        if not user_id:
+            return Response({"error": "user_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not is_complete:
             return Response({
-                "error": "Missing subject_id. Student roadmaps require a valid syllabus ID."
+                "error": "Profile Incomplete",
+                "message": "Please finish setting up your profile in the main app."
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        if role == 'student' and not subject_id:
+            return Response({"error": "subject_id is required for students."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. DUPLICATE CHECK (Using the UUID string)
+        # We check if Phase X for this subject/domain already exists for this UUID
+        existing_roadmap = Roadmap.objects.filter(
+            spring_user_id=user_id,
+            title__icontains=f"Phase {phase}",
+            # If you store subject_id in Roadmap model, add filter here
+        ).first()
+
+        if existing_roadmap:
+            return Response({
+                "message": f"Phase {phase} roadmap already exists.",
+                "roadmap_id": existing_roadmap.id,
+                "data": existing_roadmap.full_data
+            }, status=status.HTTP_200_OK)
+
+        # 4. PREPARE AI PREFERENCES
         user_preferences = {
-            "daily_hours": request.data.get('daily_hours', 2),
-            "total_days": request.data.get('total_days', 60),
-            "goal": request.data.get('goal', "Pass Exam"),
+            "daily_hours": daily_hours or 2,
+            "total_days": 25, # Fixed as per your prompt rules
+            "goal": goal or "General Mastery",
         }
 
         try:
-            # 1. Generate the JSON via AI (Now passing the phase_number)
+            # 5. GENERATE VIA AI
+            # This calls the function using Llama 3.3 70B
             roadmap_data = generate_deep_roadmap(
                 user_id, 
                 user_preferences, 
@@ -186,44 +204,65 @@ class GenerateRoadmapView(APIView):
             )
 
             if not roadmap_data:
-                return Response({"error": "AI failed to generate roadmap data."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                return Response({"error": "AI failed to generate roadmap."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            # 2. Get/Create Knowledge Graph
-            graph = UserKnowledgeGraph.objects.filter(
-                spring_user_id=user_id, 
-                domain__iexact=domain
-            ).first()
+            # 6. DATABASE SYNC (SQL)
+            # Find or create a graph reference if domain is provided
+            graph = None
+            if domain:
+                graph, _ = UserKnowledgeGraph.objects.get_or_create(
+                    spring_user_id=user_id,
+                    domain__iexact=domain,
+                    defaults={'title': f"{domain} Path"}
+                )
 
-            # 3. Save to SQL (Updated title to reflect Phase)
-            phase_suffix = f" (Phase {phase})"
+            # Create the Roadmap entry
             roadmap_obj = Roadmap.objects.create(
                 knowledge_graph=graph,
-                spring_user_id=user_id,
-                title=roadmap_data.get("title", f"{subject_id}{phase_suffix}"),
-                overview=roadmap_data.get("overview", f"Phase {phase} of your mastery plan."),
+                spring_user_id=user_id, # Storing the UUID string
+                title=roadmap_data.get("title", f"Phase {phase}: {subject_id}"),
+                overview=roadmap_data.get("overview", f"Mastery plan for {subject_id}"),
                 full_data=roadmap_data
             )
 
-            # 4. Save Tasks
-            tasks = roadmap_data.get("daily_plan", [])
-            RoadmapTask.objects.bulk_create([
+            # 7. BULK INSERT TASKS
+            daily_plans = roadmap_data.get("daily_plan", [])
+            tasks_to_create = [
                 RoadmapTask(
                     roadmap=roadmap_obj,
                     day_number=t.get("day"),
                     phase_name=t.get("type", "Learning"),
-                    topic=t.get("topic", ""),
+                    topic=t.get("topic", "General Topic"),
                     task_description=t.get("task", "")
-                ) for t in tasks
-            ])
+                ) for t in daily_plans
+            ]
+            RoadmapTask.objects.bulk_create(tasks_to_create)
 
             return Response({
-                "message": f"Phase {phase} roadmap synced successfully!",
+                "message": f"Phase {phase} roadmap generated successfully!",
                 "roadmap_id": roadmap_obj.id,
-                "phase": phase,
                 "data": roadmap_data
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
-            # Helpful for debugging in Postman
             print(f"Roadmap Error: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        
+class GetLatestRoadmapView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id):
+        # Call the method we just created in ai_logic
+        roadmap_data = get_existing_roadmap_data(user_id)
+
+        if not roadmap_data:
+            return Response({
+                "exists": False, 
+                "message": "No roadmap found for this user."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({
+            "exists": True,
+            **roadmap_data
+        }, status=status.HTTP_200_OK)
