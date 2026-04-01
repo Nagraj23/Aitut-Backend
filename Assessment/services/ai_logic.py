@@ -23,36 +23,24 @@ chroma_client = chromadb.PersistentClient(path=SHARED_CHROMA_PATH)
 client = Groq(api_key=settings.GROQ_API_KEY)
 MODEL_NAME = "llama-3.1-8b-instant"
 
-def get_syllabus_from_chroma(subject_id, user_goal="General syllabus overview"):
-    """Retrieves only the most RELEVANT chunks to avoid token limits."""
-    if not subject_id:
-        return None
-    
+def get_syllabus_from_chroma(subject_id, user_goal="Complete syllabus mastery", units=None):
+    if not subject_id: return None
     try:
         collection_name = str(subject_id).lower().strip()
         collection = get_collection(collection_name)
         
-        # --- NEW LOGIC: Querying instead of Getting All ---
-        # This looks for the top 10 chunks that match the user's goal
+        # Increase n_results to 20 or 25 to get the WHOLE syllabus 
+        # since we can't filter by unit metadata.
         results = collection.query(
             query_texts=[user_goal], 
-            n_results=10, 
-            where={
-        "$and": [
-            {"subject": subject_id.split('_')[-1].lower()}, # Extract "physics" from "bmit_cse_physics"
-            {"doc_type": "syllabus"}
-        ]
-    }
+            n_results=25, 
+            where={"doc_type": "syllabus"}
         )
         
-        if not results['documents'] or len(results['documents'][0]) == 0:
-            return "No specific syllabus text found."
-            
-        # Flatten the list of lists into a single string
+        if not results['documents']: return "No syllabus found."
         return " ".join(results['documents'][0]) 
-
     except Exception as e:
-        print(f"❌ Chroma Retrieval Error: {e}")
+        print(f"Error: {e}")
         return None
     
 def generate_diagnostic(domain, university, day_number, previous_loopholes=None):
@@ -165,66 +153,78 @@ def evaluate_answer(question, student_answer):
     except Exception as e:
         raise ValueError(f"Evaluation failed: {str(e)}")
     
-def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=None):
+def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=None, phase_number=1):
     """
     Generates a structured learning roadmap using Groq LLM.
-    Path A: Student role uses RAG (Syllabus context from ChromaDB).
-    Path B: Individual role uses Diagnostic data (Knowledge Graph).
+    Phase 1: Units 1-3 | Phase 2: Units 4-6
+    Ensures 7-8 days of pure learning per chapter for 95%+ coverage.
     """
-    # settings = get_settings()
     client = Groq(api_key=settings.GROQ_API_KEY)
     
-    # 1. PATH A: UNIVERSITY STUDENT (RAG-BASED)
     if role == "student":
-        # Helper to get syllabus text from Chroma
         goal = user_preferences.get('goal', 'Complete syllabus mastery')
+        
+        # We still keep this variable to help the prompt, 
+        # even if we don't filter Chroma by it.
+        target_unit_names = "Units 1, 2, and 3" if phase_number == 1 else "Units 4, 5, and 6"
+        
+        # Fetch the full syllabus (top 25 chunks)
         syllabus_context = get_syllabus_from_chroma(subject_id, user_goal=goal)
         
         if not syllabus_context:
-            raise ValueError(f"Could not retrieve syllabus context for: {subject_id}")
+            raise ValueError(f"Could not retrieve context for {subject_id}")
 
-       # Variables to pass from your logic: subject_id, syllabus_context
+        # THE REFACTORED "SMART-SPLIT" PROMPT
         prompt = f"""
-        You are a Senior Academic Mentor. Generate a 45-to-50 day learning roadmap strictly based on the provided SYLLABUS for {subject_id}.
-        
+        You are a Senior Academic Mentor. I am providing the FULL SYLLABUS below.
+        Your goal is to generate ONLY PHASE {phase_number} of a 60-day roadmap.
+
         SYLLABUS DATA:
         \"\"\"{syllabus_context}\"\"\"
 
+        --- PHASE INSTRUCTIONS ---
+        - You are currently generating: PHASE {phase_number}.
+        - TARGET TOPICS: If phase=1, focus ONLY on the topics in {target_unit_names}. 
+        - If phase=2, focus ONLY on the remaining units (Unit 4, 5, and 6), specifically including Nanotechnology and Carbon Nanotubes (CNT).
+
         --- DYNAMIC ALLOCATION RULES ---
-        1. CHAPTER DEPTH: For each major Unit/Chapter found in the syllabus, allocate 7 to 8 days of PURE LEARNING.
-        2. DURATION: The total roadmap must not exceed 50 days. If the syllabus is large, prioritize units with higher "Marks" or "Hours" for the 8-day slots, and use 5-6 days for smaller units.
-        3. EXCLUSION: The 7-8 day count refers to Mon-Fri learning. Saturdays and Sundays are ADDITIONAL.
+        1. CHAPTER DEPTH: Allocate 7 to 8 days of PURE LEARNING for each unit in THIS phase.
+        2. EXCLUSION: Mon-Fri for learning. Saturdays (Test) and Sundays (Revision) are ADDITIONAL.
+        3. 95% COVERAGE: Break down every sub-topic, derivation, and application mentioned for these specific units.
 
         --- MANDATORY WEEKLY STRUCTURE ---
-        - WEEKDAYS (Mon-Fri): Focused Syllabus Learning. Break down units into granular daily tasks.
-        - EVERY SATURDAY: 
-           - Topic: "Weekly Assessment Test"
-           - Task: "Comprehensive test covering all topics learned from Monday to Friday."
-           - Type: "Test"
-        - EVERY SUNDAY: 
-           - Topic: "Revision & Backlog Clear"
-           - Task: "Review difficult concepts and ensure 100% understanding of the week's content."
-           - Type: "Free"
-
-        --- CONTENT & COVERAGE ---
-        - 95% COVERAGE: Every sub-topic, derivation, and application mentioned in the SYLLABUS DATA must be assigned to a specific day.
-        - NUMERICALS: Identify any mention of 'Numerical', 'Problem Solving', or 'Calculations' in the syllabus and assign at least one dedicated day per unit for practice.
-        - SEQUENCE: Strictly follow the numerical order of Units/Chapters as provided in the syllabus.
+        - Mon-Fri: Daily learning tasks based on syllabus.
+        - SATURDAY: Topic: "Weekly Assessment Test" | Type: "Test"
+        - SUNDAY: Topic: "Revision & Backlog Clear" | Type: "Free"
 
         --- OUTPUT FORMAT (JSON ONLY) ---
         {{
-            "title": "Mastery Roadmap: {subject_id}",
-            "overview": "A dynamic 45-50 day deep-dive plan mapped to syllabus weightage and hours.",
+            "phase": {phase_number},
+            "title": "Phase {phase_number}: {'Foundations' if phase_number == 1 else 'Advanced Applications'}",
             "daily_plan": [
                 {{ 
-                  "day": 1, 
-                  "topic": "Unit/Sub-topic Name", 
-                  "task": "Specific learning objective from syllabus", 
-                  "type": "Learning|Problem Solving|Test|Free" 
+                "day": {'1' if phase_number == 1 else '31'}, 
+                "topic": "Unit/Sub-topic Name", 
+                "task": "Learning objective", 
+                "type": "Learning|Problem Solving|Test|Free" 
                 }}
             ]
         }}
         """
+
+        try:
+            response = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="llama3-70b-8192",
+                temperature=0.2,
+                response_format={"type": "json_object"}
+            )
+            
+            return json.loads(response.choices[0].message.content)
+
+        except Exception as e:
+            print(f"Error generating phase {phase_number}: {e}")
+            return None
     
     # 2. PATH B: INDIVIDUAL (DIAGNOSTIC-BASED)
     else:

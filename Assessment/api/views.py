@@ -157,9 +157,13 @@ class GenerateRoadmapView(APIView):
         user_id = str(request.user.id)
         role = request.data.get('role', 'student').lower()
         domain = request.data.get('domain')
-        subject_id = request.data.get('subject_id') # e.g., solapur_cse_1_physics
+        subject_id = request.data.get('subject_id') 
+        
+        # --- PHASE HANDLING ---
+        # Default to Phase 1 (Days 1-30) if not specified
+        phase = int(request.data.get('phase', 1))
 
-        # --- CRITICAL FIX: VALIDATION ---
+        # --- VALIDATION ---
         if role == 'student' and not subject_id:
             return Response({
                 "error": "Missing subject_id. Student roadmaps require a valid syllabus ID."
@@ -172,26 +176,31 @@ class GenerateRoadmapView(APIView):
         }
 
         try:
-            # 1. Generate the JSON via AI
+            # 1. Generate the JSON via AI (Now passing the phase_number)
             roadmap_data = generate_deep_roadmap(
                 user_id, 
                 user_preferences, 
                 role=role, 
-                subject_id=subject_id
+                subject_id=subject_id,
+                phase_number=phase
             )
 
-            # 2. Get/Create Knowledge Graph (Optional for students)
+            if not roadmap_data:
+                return Response({"error": "AI failed to generate roadmap data."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            # 2. Get/Create Knowledge Graph
             graph = UserKnowledgeGraph.objects.filter(
                 spring_user_id=user_id, 
                 domain__iexact=domain
             ).first()
 
-            # 3. Save to SQL
+            # 3. Save to SQL (Updated title to reflect Phase)
+            phase_suffix = f" (Phase {phase})"
             roadmap_obj = Roadmap.objects.create(
                 knowledge_graph=graph,
                 spring_user_id=user_id,
-                title=roadmap_data.get("title", f"{subject_id} Roadmap"),
-                overview=roadmap_data.get("overview", ""),
+                title=roadmap_data.get("title", f"{subject_id}{phase_suffix}"),
+                overview=roadmap_data.get("overview", f"Phase {phase} of your mastery plan."),
                 full_data=roadmap_data
             )
 
@@ -208,10 +217,13 @@ class GenerateRoadmapView(APIView):
             ])
 
             return Response({
-                "message": "Roadmap synced with syllabus!",
+                "message": f"Phase {phase} roadmap synced successfully!",
                 "roadmap_id": roadmap_obj.id,
+                "phase": phase,
                 "data": roadmap_data
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
+            # Helpful for debugging in Postman
+            print(f"Roadmap Error: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
