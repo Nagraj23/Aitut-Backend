@@ -38,8 +38,12 @@ REST_FRAMEWORK = {
 SPRING_JWT_SECRET = os.getenv("SPRING_JWT_SECRET") # Must match Spring Boot secret [cite: 10]
 GROQ_API_KEY = os.getenv("GROQ_API_KEY") # 👈 Add this
 
+CHROMA_DB_PATH = os.path.abspath(os.path.join(BASE_DIR, '..', 'TEACH', 'chroma_data'))
+
+print(f"📡 System Linking: ChromaDB path set to {CHROMA_DB_PATH}")
 # Optional: Define your preferred Groq model here for easy global changes
 GROQ_DEFAULT_MODEL = "llama-3.1-8b-instant"
+CHAT_MODEL = GROQ_DEFAULT_MODEL
 
 ROOT_URLCONF = 'core.urls'
 WSGI_APPLICATION = 'core.wsgi.application'

@@ -261,35 +261,36 @@ public class AuthService {
 
     // ================= UPDATE PROFILE =================
 
-   public String updateProfile(UUID userId, UpdateProfileDTO dto) {
-    Users user = repo.findById(userId)
-            .orElseThrow(() -> new RuntimeException("User not found"));
+   // Inside your Service...
 
-    // 1. Basic Info (Always update)
+public AuthResponse updateBasicInfo(UUID userId, BasicProfileDto dto) {
+    Users user = repo.findById(userId).orElseThrow();
+    
+    // Only map basic fields
     user.setName(dto.getName());
     user.setPhoneNo(dto.getPhoneNo());
     user.setGender(dto.getGender());
-    user.setDateOfBirth(dto.getDateOfBirth());
-    user.setProfilePicUrl(dto.getProfilePicUrl());
-
-    // 2. Academic/Goal info
-    user.setCollege(dto.getCollege());
-    user.setUniversity(dto.getUniversity());
-    user.setDepartment(dto.getDepartment());
-    user.setTargetCourse(dto.getTargetCourse());
-    user.setCourseDuration(dto.getCourseDuration());
-    user.setDailyStudyHours(dto.getDailyStudyHours());
-
-    // 3. Mark completion based on role-specific logic
-    user.setComplete(isProfileFullyFilled(user));
-
-    repo.save(user);
+    // ...
     
-    // Return a more descriptive message based on state
-    return user.isComplete() ? "Profile complete!" : "Profile updated, but some required fields are missing.";
+    repo.save(user);
+    return createAuthResponse(user);
 }
 
-// Helper method to define what "Complete" means for Ai-Tut
+public AuthResponse updateLearningInfo(UUID userId, LearningPathDTO dto) {
+    Users user = repo.findById(userId).orElseThrow();
+    
+    // Only map learning fields
+    user.setTargetCourse(dto.getTargetCourse());
+    user.setDailyStudyHours(dto.getDailyStudyHours());
+    // ...
+    
+    // IMPORTANT: Check completion here since these are the "gatekeeper" fields
+    user.setComplete(isProfileFullyFilled(user));
+    
+    repo.save(user);
+   return createAuthResponse(user);
+}
+
 private boolean isProfileFullyFilled(Users user) {
     // 1. Common required fields for both roles
     boolean hasBaseInfo = user.getTargetCourse() != null && !user.getTargetCourse().isEmpty() &&
