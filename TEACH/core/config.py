@@ -4,7 +4,7 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # API Keys
-    GEMINI_API_KEY: str = ""
+    GEMINI_API_KEY: str = "AIzaSyC9_P4osvu8kXe3lN3q104Wbz4vO-e4bUs"
     GROQ_API_KEY: str = "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"  # 👈 Add this for the new Groq service
 
     # Paths
