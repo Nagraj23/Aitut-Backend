@@ -200,7 +200,8 @@ def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=
                   "day": {'1' if phase_number == 1 else '31'}, 
                   "topic": "Unit X: Specific Sub-topic", 
                   "task": "Step-by-step learning objective including derivations", 
-                  "type": "Learning|Problem Solving|Test|Free" 
+                  "type": "Learning|Problem Solving|Test|Free" ,
+                  "is_completed": false  
                 }}
             ]
         }}
@@ -257,7 +258,7 @@ def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=
                     "days": "Day 1-10",
                     "focus": "...",
                     "daily_plan": [
-                        {{ "day": 1, "topic": "...", "task": "...", "depth": "Beginner|DeepDive" }}
+                        {{ "day": 1, "topic": "...", "task": "...", "depth": "Beginner|DeepDive","is_completed": false }}
                     ]
                 }}
             ],
@@ -310,7 +311,8 @@ def get_existing_roadmap_data(user_id):
                 "day": task.day_number,
                 "topic": task.topic,
                 "task": task.task_description,
-                "type": task.phase_name  # Learning, Test, etc.
+                "type": task.phase_name,  # Le,arning, Test, etc.
+                "is_completed": getattr(task, 'is_completed', False)
             })
 
         # 4. Return formatted response (matches what GenerateDeepRoadmap creates)
