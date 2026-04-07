@@ -15,15 +15,23 @@ class Subject(Base):
     id = Column(Integer, primary_key=True)
     dept_id = Column(String, ForeignKey("departments.id"))
     year = Column(Integer)                 # 1, 2, 3, or 4
+    university = Column(String)
     name = Column(String)                  # e.g., "Physics"
     vector_collection = Column(String)     # Unique name for ChromaDB
 
+# --- UPDATED: Added user_id and daily_plan storage ---
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, index=True)   # <-- Added: To separate user history
     subject_id = Column(Integer, ForeignKey("subjects.id"))
     day_number = Column(Integer)           # e.g., Day 3
-    summary = Column(Text, nullable=True)  # For the "Quick Recap" feature
+    
+    # Stores the specific topic/task for this user's day from the roadmap
+    daily_topic = Column(String, nullable=True) 
+    daily_task_json = Column(JSON, nullable=True) 
+    
+    summary = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     messages = relationship("Message", back_populates="session")

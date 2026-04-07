@@ -21,6 +21,8 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 
+import jakarta.transaction.Transactional;
+
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -259,57 +261,65 @@ public class AuthService {
                 : (String) profile.get("login");
     }
 
-    // ================= UPDATE PROFILE =================
+ 
 
-   // Inside your Service...
+@Transactional
+    public AuthResponse updateBasicInfo(UUID userId, BasicProfileDto dto) {
+        Users user = repo.findById(userId).orElseThrow();
+        
+        user.setName(dto.getName());
+        user.setPhoneNo(dto.getPhoneNo());
+        user.setGender(dto.getGender());
 
-public AuthResponse updateBasicInfo(UUID userId, BasicProfileDto dto) {
-    Users user = repo.findById(userId).orElseThrow();
-    
-    // Only map basic fields
-    user.setName(dto.getName());
-    user.setPhoneNo(dto.getPhoneNo());
-    user.setGender(dto.getGender());
-    // ...
-    
-    repo.save(user);
-    return createAuthResponse(user);
-}
+        // FIX: Always re-check completion status after any update
+        user.setComplete(isProfileFullyFilled(user));
 
-public AuthResponse updateLearningInfo(UUID userId, LearningPathDTO dto) {
-    Users user = repo.findById(userId).orElseThrow();
-    
-    // Only map learning fields
-    user.setTargetCourse(dto.getTargetCourse());
-    user.setDailyStudyHours(dto.getDailyStudyHours());
-    // ...
-    
-    // IMPORTANT: Check completion here since these are the "gatekeeper" fields
-    user.setComplete(isProfileFullyFilled(user));
-    
-    repo.save(user);
-   return createAuthResponse(user);
-}
+        repo.save(user);
+        return createAuthResponse(user);
+    }
+    @Transactional
+    public AuthResponse updateLearningProfile(UUID userId, LearningPathDTO dto) {
+        Users user = repo.findById(userId).orElseThrow();
 
-private boolean isProfileFullyFilled(Users user) {
-    // 1. Common required fields for both roles
-    boolean hasBaseInfo = user.getTargetCourse() != null && !user.getTargetCourse().isEmpty() &&
-                          user.getCourseDuration() != null && !user.getCourseDuration().isEmpty() &&
-                          user.getDailyStudyHours() != null && user.getDailyStudyHours() > 0;
+        // Learning info
+        user.setTargetCourse(dto.getTargetCourse());
+        user.setCourseDuration(dto.getCourseDuration());
+        user.setDailyStudyHours(dto.getDailyStudyHours());
 
-    // 2. Role-specific requirements
-    if (user.getRole() == Users.Role.STUDENT) {
-        // Students MUST have academic info
-        return hasBaseInfo && 
-               user.getCollege() != null && !user.getCollege().isEmpty() &&
-               user.getUniversity() != null && !user.getUniversity().isEmpty();
-    } else if (user.getRole() == Users.Role.INDIVIDUAL) {
-        // Individuals only need the base info
-        return hasBaseInfo;
+        // Role-specific info
+        if (user.getRole() == Users.Role.STUDENT) {
+            user.setCollege(dto.getCollege());
+            user.setUniversity(dto.getUniversity());
+        }
+
+        // Always re-check completion status
+        user.setComplete(isProfileFullyFilled(user));
+
+        repo.save(user);
+        return createAuthResponse(user);
     }
 
-    return false; // Default for TEACHER/ADMIN or unknown roles
-}
+    private boolean isProfileFullyFilled(Users user) {
+        // 1. Mandatory for EVERYONE (including Basic Info)
+        boolean hasIdentity = user.getName() != null && !user.getName().isBlank() &&
+                             user.getPhoneNo() != null && !user.getPhoneNo().isBlank();
+
+        // 2. Mandatory Learning Info
+        boolean hasLearningInfo = user.getTargetCourse() != null && !user.getTargetCourse().isBlank() &&
+                                 user.getCourseDuration() != null && !user.getCourseDuration().isBlank() &&
+                                 user.getDailyStudyHours() != null && user.getDailyStudyHours() > 0;
+
+        if (!hasIdentity || !hasLearningInfo) return false;
+
+        // 3. Role-specific requirements
+        if (user.getRole() == Users.Role.STUDENT) {
+            return user.getCollege() != null && !user.getCollege().isBlank() &&
+                   user.getUniversity() != null && !user.getUniversity().isBlank();
+        }
+
+        return true; // INDIVIDUAL only needs Identity + Learning Info
+    }
+
     // ================= GET USER =================
 
     public Users getUserById(UUID id) {

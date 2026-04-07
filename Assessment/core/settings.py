@@ -8,7 +8,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Security
 SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = ['*']
+# settings.py
+ALLOWED_HOSTS = ['10.139.12.44', '192.168.42.129', 'localhost', '127.0.0.1', '*']
+
+CORS_ALLOW_ALL_ORIGINS = True
 
 # Application Definition
 INSTALLED_APPS = [
@@ -21,8 +24,12 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',  # Keep this at the top
     'django.middleware.common.CommonMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware', # Added
+    'django.middleware.csrf.CsrfViewMiddleware',           # Added
+    'django.contrib.auth.middleware.AuthenticationMiddleware', # Added
+    'django.contrib.messages.middleware.MessageMiddleware', # Added
 ]
 
 # Auth Bridge: Using the shared secret from Spring Boot 

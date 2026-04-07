@@ -58,17 +58,23 @@ public class AuthController {
     // ✅ Update profile
  // 1. Route for Personal/Basic Details
 @PutMapping("/update-profile/basic/{userId}")
-public ResponseEntity<AuthResponse> updateBasicProfile(@PathVariable UUID userId, @RequestBody BasicProfileDto dto) {
-    AuthResponse message = authService.updateBasicInfo(userId, dto);
-    return ResponseEntity.ok(message);
-}
+    public ResponseEntity<AuthResponse> updateBasicProfile(
+            @PathVariable UUID userId, 
+            @Valid @RequestBody BasicProfileDto dto) { // Added @Valid
+        
+        AuthResponse response = authService.updateBasicInfo(userId, dto);
+        return ResponseEntity.ok(response);
+    }
 
-// 2. Route for Academic/Learning Goals (The "Gatekeeper")
-@PutMapping("/update-profile/learning/{userId}")
-public ResponseEntity<AuthResponse> updateLearningPath(@PathVariable UUID userId, @RequestBody LearningPathDTO dto) {
-   AuthResponse response = authService.updateLearningInfo(userId, dto);
-    return ResponseEntity.ok(response);
-}
+    // 2. Route for Academic/Learning Goals
+    @PutMapping("/update-profile/learning/{userId}")
+    public ResponseEntity<AuthResponse> updateLearningPath(
+            @PathVariable UUID userId, 
+            @Valid @RequestBody LearningPathDTO dto) { // Added @Valid
+        
+        AuthResponse response = authService.updateLearningProfile(userId, dto);
+        return ResponseEntity.ok(response);
+    }
 
     // ✅ Get user by ID
     @GetMapping("/user/{id}")
