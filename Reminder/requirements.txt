@@ -2,9 +2,9 @@
 fastapi==0.110.0
 uvicorn==0.27.1
 
-# Database & Postgres
+# Database Driver (Updated for Python 3.13 compatibility)
+psycopg[binary]>=3.2.0
 sqlalchemy==2.0.27
-psycopg2-binary==2.9.9
 
 # Environment & Utilities
 python-dotenv==1.0.1
