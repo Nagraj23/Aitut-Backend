@@ -1,18 +1,24 @@
 import time
 import datetime
+import redis  # New: Redis library
+import json   # New: To send structured data
 from typing import List
 from db.session import SessionLocal
 from db.models import Alarm
 
+# 1. Initialize Redis Connection (ensure Redis server is running!)
+# decode_responses=True helps us handle strings easily
+r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+
 def monitor_alarms():
-    print("🚀 Background Alarm Monitor: Active")
+    print("🚀 Background Alarm Monitor: Active [Redis Mode]")
     while True:
         with SessionLocal() as db:
             try:
-                # Use UTC to stay in sync with Spring/PostgreSQL
+                # Get current time in UTC
                 now = datetime.datetime.now(datetime.timezone.utc)
                 
-                # TYPE HINT: Fixes 'Cannot assign to attribute' error
+                # Fetch alarms that are due
                 due_alarms: List[Alarm] = db.query(Alarm).filter(
                     Alarm.is_active == True,
                     Alarm.is_fired == False,
@@ -20,24 +26,40 @@ def monitor_alarms():
                 ).all()
 
                 for alarm in due_alarms:
-                    # TERMINAL LOG: This is your test signal
+                    # LOG 1: Backend acknowledges the hit
                     print(f"⏰ TRIGGERING: {alarm.title}")
-                   
-                    if alarm.repeat_days:
-                        alarm.is_fired = True
-                    else:
-                        alarm.is_active = False
-                        alarm.is_fired = True
                     
-                    db.commit()
+                    # 2. STATE UPDATE: Prevent double triggers
+                    alarm.is_fired = True
+                    if not alarm.repeat_days:
+                        alarm.is_active = False
+                    
+                    db.commit() # Save to DB first for reliability
 
-                # DAILY RESET: Runs at midnight to reset repeating alarms
+                    # 3. REDIS PUBLISH: The real-time "shout" to the UI
+                    # We send a JSON object so the UI knows exactly what happened
+                    payload = {
+                        "event": "ALARM_TRIGGER",
+                        "title": alarm.title,
+                        "alarm_id": alarm.id,
+                        "type": "mcq_test"  # Tells UI to prep the test
+                    }
+                    
+                    # Publish to a channel unique to the user
+                    channel_name = f"user_notifications_{alarm.user_id}"
+                    r.publish(channel_name, json.dumps(payload))
+                    
+                    print(f"📡 Redis Signal Sent to Channel: {channel_name}")
+
+                # 4. DAILY RESET: (Your existing midnight logic)
                 if now.hour == 0 and now.minute == 0 and now.second < 15:
-                    db.query(Alarm).filter(Alarm.repeat_days != None).update({"is_fired": False})
+                    db.query(Alarm).filter(Alarm.repeat_days.isnot(None)).update({"is_fired": False})
                     db.commit()
+                    print("♻️ Repeating alarms reset for the new day.")
 
             except Exception as e:
                 db.rollback()
                 print(f"❌ Worker Error: {e}")
         
-        time.sleep(10)
+        # 5. POLL RATE: 1 second for precision, or 5-10 to save CPU
+        time.sleep(1)
