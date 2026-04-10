@@ -277,6 +277,7 @@ public class AuthService {
         repo.save(user);
         return createAuthResponse(user);
     }
+    
     @Transactional
     public AuthResponse updateLearningProfile(UUID userId, LearningPathDTO dto) {
         Users user = repo.findById(userId).orElseThrow();

@@ -25,7 +25,7 @@ def create_alarm(
     db: Session = Depends(get_db),
     token_data: dict = Depends(verify_token)
 ):
-    spring_user_id = token_data.get("sub") 
+    spring_user_id = token_data.get("user_id")
     
     new_alarm = Alarm(
         title=alarm_data.title,
@@ -44,7 +44,7 @@ def list_active_alarms(
     token_data: dict = Depends(verify_token)
 ):
     # FIX: Use .get("sub") to stay consistent with your Create route
-    user_id = token_data.get("sub")
+    user_id = token_data.get("user_id")
     return db.query(Alarm).filter(
         Alarm.is_active == True,
         Alarm.user_id == user_id
@@ -57,7 +57,7 @@ async def listen_to_alarms(
     request: Request,
     token_data: dict = Depends(verify_token)
 ):
-    user_id = token_data.get("sub")
+    user_id = token_data.get("user_id")
 
     async def event_generator():
         # 1. Subscribe to the user's Redis channel
@@ -77,9 +77,7 @@ async def listen_to_alarms(
                 if message and message['type'] == 'message':
                         yield f"data: {message['data']}\n\n"
                 
-                if message:
-                    # 'yield' sends the data to the UI immediately
-                    yield f"data: {message['data']}\n\n"
+               
                 
                 # 4. Stay efficient
                 await asyncio.sleep(0.5) 
