@@ -11,6 +11,15 @@ from services.rag_service import RAGService
 from fastapi.responses import StreamingResponse
 import logging
 import edge_tts
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from db.database import get_db
+from db.models import ChatSession, Message
+from services.rag_service import RAGService
+import logging
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
 import io
 
 logger = logging.getLogger(__name__)
@@ -212,3 +221,48 @@ async def speak(text: str, voice: str = "en-IN-NeerjaNeural"):
                                 yield audio_data
 
     return StreamingResponse(generate(), media_type="audio/mpeg")
+
+
+@router.post("/session/{session_id}/wrapup")
+async def wrapup_chat_session(session_id: str, db: Session = Depends(get_db)):
+    # 1. Fetch the Chat Session
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # 2. Fetch all messages in this session to analyze
+    messages = db.query(Message).filter(Message.session_id == session_id).order_by(Message.timestamp.asc()).all()
+    
+    if not messages:
+        return {"message": "No conversation found to summarize."}
+
+    # 3. Format history for the AI
+    history_data = [
+        {"role": msg.role, "content": msg.content} 
+        for msg in messages
+    ]
+
+    # 4. Generate Recap (Mastered topics & Loopholes)
+    try:
+        recap = RAGService.generate_daily_recap(history_data)
+        
+        # 5. Update the Database row
+        setattr(session, 'is_completed', True)
+        setattr(session, 'mastered_topics', recap.get("mastered", []))
+        setattr(session, 'loopholes', recap.get("loopholes", []))
+        
+        db.commit()
+        db.refresh(session)
+        
+        logger.info(f"Session {session_id} wrapped up successfully.")
+        
+        return {
+            "status": "success",
+            "day": session.day_number,
+            "summary": recap
+        }
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error wrapping up session {session_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to generate daily recap")

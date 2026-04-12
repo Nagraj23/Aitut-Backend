@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, JSON, Text
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, JSON, Text,Boolean
 from sqlalchemy.orm import relationship, declarative_base
 from datetime import datetime
 import uuid
@@ -23,13 +23,17 @@ class Subject(Base):
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String, index=True)   # <-- Added: To separate user history
+    user_id = Column(String, index=True)
     subject_id = Column(Integer, ForeignKey("subjects.id"))
-    day_number = Column(Integer)           # e.g., Day 3
+    day_number = Column(Integer)
     
-    # Stores the specific topic/task for this user's day from the roadmap
     daily_topic = Column(String, nullable=True) 
     daily_task_json = Column(JSON, nullable=True) 
+    
+    # NEW: Structured summary columns
+    mastered_topics = Column(JSON, nullable=True) # List of strings
+    loopholes = Column(JSON, nullable=True)       # List of strings
+    is_completed = Column(Boolean, default=False) # Standard Boolean
     
     summary = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

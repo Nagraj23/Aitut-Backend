@@ -12,6 +12,7 @@ from typing import List, Optional
 import re
 from typing import AsyncGenerator
 import edge_tts
+import json
 
 
 logging.basicConfig(level=logging.INFO)
@@ -25,7 +26,49 @@ VOICE = "en-IN-NeerjaNeural"
 
 class RAGService:
 
+ @staticmethod
+ def generate_daily_recap(history: List[dict]):
+    """
+    Analyzes the history of the current session to extract 
+    Mastered topics and Loopholes for the UI and the Quiz.
+    """
+    # 1. Prepare the chat history for the AI to analyze
+    # We only take the actual text content from the history list
+    chat_text = "\n".join([f"{m['role']}: {m['content']}" for m in history])
 
+    recap_prompt = f"""
+    You are an educational auditor. Analyze this tutoring session history:
+    {chat_text}
+
+    Generate a summary of the student's progress today. 
+    Return a JSON object with EXACTLY these two keys:
+    1. "mastered": A list of 3 short bullet points of things the student understood well.
+    2. "loopholes": A list of 3 specific technical gaps or topics the student struggled with.
+    
+    Output ONLY valid JSON.
+    """
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="Llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": recap_prompt}],
+            response_format={"type": "json_object"}
+        )
+        
+        # 1. Capture the content in a variable
+        raw_content = response.choices[0].message.content
+        
+        # 2. Safety check: ensure raw_content is a string before loading
+        if raw_content:
+            return json.loads(raw_content)
+        
+        # 3. Fallback if content is None
+        raise ValueError("AI returned empty content")
+
+    except Exception as e:
+        logger.error(f"Recap Generation Error: {e}")
+        return {"mastered": ["Lesson completed"], "loopholes": []}
+    
  @staticmethod
  def ingest_pdf(file_path: str, university: str, branch: str, year: int, subject: str, doc_type: str = "notes"):
     loader = PyPDFLoader(file_path)
@@ -242,3 +285,5 @@ async def get_audio_stream(text_generator: AsyncGenerator[str, None]):
             
             # Reset buffer for the next sentence
             buffer = ""
+            
+            
