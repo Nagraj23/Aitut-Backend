@@ -194,7 +194,8 @@ class RAGService:
             messages=messages,
             model="Llama-3.3-70b-versatile",
             temperature=0.4,
-            stream=True 
+            stream=True ,
+            timeout=20.0
         )
 
         # [CHANGE 2]: Iterate and yield chunks

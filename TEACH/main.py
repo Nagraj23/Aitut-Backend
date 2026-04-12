@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from api.endpoints import chat
 from db.database import init_db
+import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
 
 app = FastAPI(title="Ai-Tut Teacher Backend")
 

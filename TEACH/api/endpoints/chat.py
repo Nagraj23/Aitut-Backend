@@ -9,8 +9,11 @@ from db.database import get_db
 from db import models
 from services.rag_service import RAGService
 from fastapi.responses import StreamingResponse
+import logging
 import edge_tts
 import io
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -155,38 +158,41 @@ async def ask_teacher(
     # Format history for the AI (Oldest to Newest)
     chat_context = [{"role": m.role, "content": m.content} for m in reversed(history_objs)]
 
-    # 5. Call the RAG Service (The "Master Tutor" logic)
-    # This merges data from your 3 textbooks in ChromaDB
-    answer = RAGService.get_teacher_response(
-        question=request.message, 
-        university=uni,
-        branch=dept,
-        year=year,
-        subject=clean_name,
-        daily_task={
-            "day": day,
-            "topic": request.topic,
-            "task": request.task
-        },
-        history=chat_context 
-    )
+    async def generate_and_save():
+        full_ai_message = ""
+        
+        # This is your generator from RAGService
+        gen = RAGService.get_teacher_response(
+            question=request.message, 
+            university=uni, branch=dept, year=year, 
+            subject=clean_name, daily_task={"day": day, "topic": request.topic, "task": request.task},
+            history=chat_context 
+        )
 
-    # 6. Save BOTH messages to your SQL Message Table
-    # Save the User's input
-    user_content = request.message if request.message.strip() else f"Started: {request.topic}"
-    db.add(models.Message(session_id=session.id, role="user", content=user_content))
-    db.add(models.Message(session_id=session.id, role="assistant", content=answer))
-    db.commit()
+        for chunk in gen:
+            full_ai_message += chunk
+            yield chunk  # This sends text chunks to the UI
 
-    # 7. Final Response to UI
-    return {
-        "answer": answer,
-        "session_id": session.id,
-        "topic": request.topic,
-        "day": day,
-        "subject": subj.name,
-        "is_new_session": not bool(history_objs)
-    }
+        # 6. Save to DB only AFTER the stream is complete
+        try:
+            # Import your SessionLocal from your database.py
+            from db.database import SessionLocal 
+            
+            with SessionLocal() as save_db:
+                user_content = request.message if request.message.strip() else f"Started: {request.topic}"
+                
+                new_user_msg = models.Message(session_id=session.id, role="user", content=user_content)
+                new_ai_msg = models.Message(session_id=session.id, role="assistant", content=full_ai_message)
+                
+                save_db.add(new_user_msg)
+                save_db.add(new_ai_msg)
+                save_db.commit()
+                logger.info(f"✅ Conversation saved for session {session.id}")
+        except Exception as e:
+            logger.error(f"Post-stream save error: {e}")
+
+    # 7. Return as a Stream
+    return StreamingResponse(generate_and_save(), media_type="text/plain")
     
 @router.get("/speak")
 async def speak(text: str, voice: str = "en-IN-NeerjaNeural"):

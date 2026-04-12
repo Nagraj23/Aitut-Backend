@@ -1,12 +1,10 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
+from core.config import get_settings
 from .models import Base
 
-# Change this to your actual Postgres credentials
-# Replace Nagraj@2005 with Nagraj%402005
-DATABASE_URL = "postgresql://postgres:Nagraj%402005@localhost:5432/Aitut"
-
-engine = create_engine(DATABASE_URL)
+settings = get_settings()
+engine = create_engine(settings.DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # This creates the tables in Postgres if they don't exist
