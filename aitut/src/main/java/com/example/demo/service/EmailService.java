@@ -4,6 +4,7 @@ import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -27,6 +28,71 @@ public class EmailService {
         } catch (Exception e) {
             throw new RuntimeException("Failed to send Ai-Tut verification email 💀", e);
         }
+    }
+    @Async
+    public void sendActivationEmail(String to, String name, String token) {
+        try {
+            // Replace with your actual frontend URL (e.g., http://localhost:5173/activate)
+            String activationUrl = "https://ai-tut.com/activate?token=" + token;
+
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+
+            helper.setTo(to);
+            helper.setSubject("Welcome to Ai-Tut! Activate your account 🚀");
+            helper.setFrom("no-reply@ai-tut.com");
+            helper.setText(buildActivationHtml(name, activationUrl), true);
+
+            mailSender.send(message);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to send Ai-Tut activation email 💀", e);
+        }
+    }
+
+    private String buildActivationHtml(String name, String url) {
+        return """
+             <!DOCTYPE html>
+             <html>
+             <body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,sans-serif;">
+               <table width="100%%" cellpadding="0" cellspacing="0">
+                 <tr>
+                   <td align="center" style="padding:40px 0;">
+                     <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:10px;box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                       <tr>
+                         <td style="background:#4f46e5;padding:20px;text-align:center;">
+                           <span style="color:#ffffff;font-size:36px;font-weight:bold;">Ai-<span style="color:#fbbf24;">Tut</span></span>
+                         </td>
+                       </tr>
+                       <tr>
+                         <td style="padding:40px;color:#1f2937;">
+                           <h2 style="margin:0;font-size:24px;">Welcome, %s!</h2>
+                           <p style="margin-top:20px;font-size:16px;line-height:1.6;">
+                             Your Training and Placement Officer (TPO) has added you to the <b>Ai-Tut</b> platform. 
+                             To get started with your placement preparation and AI-driven roadmaps, please set up your account password.
+                           </p>
+                           <div style="margin:35px 0;text-align:center;">
+                             <a href="%s" style="background-color:#4f46e5;color:white;padding:15px 30px;text-decoration:none;font-size:18px;font-weight:bold;border-radius:8px;display:inline-block;">
+                               Activate My Account
+                             </a>
+                           </div>
+                           <p style="font-size:13px;color:#6b7280;">
+                             If the button doesn't work, copy and paste this link into your browser:<br>
+                             <a href="%s" style="color:#4f46e5;">%s</a>
+                           </p>
+                         </td>
+                       </tr>
+                       <tr>
+                         <td style="background:#f9fafb;color:#9ca3af;text-align:center;padding:20px;font-size:12px;">
+                           © 2026 Ai-Tut Mentor Platform | Solapur, MH
+                         </td>
+                       </tr>
+                     </table>
+                   </td>
+                 </tr>
+               </table>
+             </body>
+             </html>
+        """.formatted(name, url, url, url);
     }
 
     private String buildOtpHtml(String name, String otp) {

@@ -8,6 +8,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 
 import java.security.PrivateKey;
 import java.time.LocalDate;
+import com.example.demo.model.RefreshToken;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -39,13 +40,19 @@ public class Users implements UserDetails {
     private String bloodGroup;
     private String profilePicUrl;
 
+    @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
+    
+    private VerificationToken verificationToken; 
+
     // Academic Fields (only meaningful for STUDENT / TEACHER)
     private String college;
     private String department;
-    private String University;
+    private String university;
+    private UUID invitedBy;
+    private int year;
     private String specialization;
-    private String TargetCourse;
-    private String CourseDuration; 
+    private String targetCourse;
+    private String courseDuration;
     private Integer DailyStudyHours;
 
     
@@ -55,7 +62,7 @@ public class Users implements UserDetails {
 
     private boolean verified;
 
-    public enum Role { STUDENT, TEACHER, INDIVIDUAL , ADMIN }
+    public enum Role { STUDENT, TEACHER, INDIVIDUAL , TPO }
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
