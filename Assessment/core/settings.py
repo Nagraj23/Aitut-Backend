@@ -19,10 +19,27 @@ INSTALLED_APPS = [
    # Your models folder [cite: 1, 11]
     'api', # Your views folder [cite: 6, 23]
 ]
-
+# 1. Ensure Middleware order is correct (CorsMiddleware MUST be at the top)
 MIDDLEWARE = [
-    'corsheaders.middleware.CorsMiddleware',
+    'corsheaders.middleware.CorsMiddleware', # MUST be first
     'django.middleware.common.CommonMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+]
+
+# 2. Add these specific CORS settings
+CORS_ALLOW_ALL_ORIGINS = True 
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_METHODS = ["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"]
+CORS_ALLOW_HEADERS = ["*"]
+
+# 3. CSRF Trust (Required for POST requests from mobile)
+CSRF_TRUSTED_ORIGINS = [
+    'http://10.205.155.26',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000'
 ]
 
 # Auth Bridge: Using the shared secret from Spring Boot 
@@ -47,7 +64,9 @@ CHAT_MODEL = GROQ_DEFAULT_MODEL
 
 ROOT_URLCONF = 'core.urls'
 WSGI_APPLICATION = 'core.wsgi.application'
-
+# Add these at the very bottom
+# CORS_ALLOW_ALL_ORIGINS = True  # Allows your mobile app to connect
+# CSRF_TRUSTED_ORIGINS = ['http://10.205.155.26'] # Trust your own network IP
 # Database (PostgreSQL) [cite: 4]
 DATABASES = {
     'default': {

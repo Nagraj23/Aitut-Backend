@@ -1,7 +1,8 @@
-package com.example.demo.security; // Updated package
+package com.example.demo.security;
 
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value; // 👈 Add this
 import org.springframework.stereotype.Service;
 
 import java.security.Key;
@@ -11,11 +12,12 @@ import java.util.UUID;
 @Service
 public class JWTService {
 
-    // Must be at least 64 characters for HS256 algorithm
-    private final String SECRET = "fcac35f0013bd448bd10a736ef73a6e125aa9d585aef1bc01a01b210c9ddefb2";
+    @Value("${app.jwtSecret}") // 👈 This pulls from application.properties
+    private String secretKey;
+
     private final long EXPIRATION = 1000 * 60 * 60 * 24; // 24 hours
 
-    public String generateToken(String username , UUID userId) {
+    public String generateToken(String username, UUID userId) {
         return Jwts.builder()
                 .setSubject(username)
                 .claim("userId", userId)
@@ -45,6 +47,7 @@ public class JWTService {
     }
 
     private Key getSignKey() {
-        return Keys.hmacShaKeyFor(SECRET.getBytes());
+        // This ensures we use the exact same bytes Django uses with .encode('utf-8')
+        return Keys.hmacShaKeyFor(secretKey.getBytes());
     }
 }

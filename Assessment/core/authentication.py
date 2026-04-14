@@ -29,29 +29,49 @@ class SpringBootTokenAuthentication(BaseAuthentication):
         payload = None
 
         # --- FALLBACK LOGIC START ---
-        
-        # Method 1: Try decoding as standard UTF-8 string (Matches SECRET.getBytes())
+        # --- FIXED LOGIC ---
         try:
+            # Most Spring Boot JWT implementations use the secret as a UTF-8 byte array
             payload = jwt.decode(token, raw_secret.encode('utf-8'), algorithms=["HS256"])
-            print("--- DEBUG: Authenticated via UTF-8 String Secret ---")
+            print("--- DEBUG: Authenticated Successfully ---")
+        except jwt.ExpiredSignatureError:
+            raise AuthenticationFailed("Token has expired.")
         except jwt.InvalidSignatureError:
-            # Method 2: Try decoding as Hex bytes (Common if the secret is a hash string)
+            # If the first one fails, try as Hex (common for auto-generated keys)
             try:
                 secret_as_hex = bytes.fromhex(raw_secret)
                 payload = jwt.decode(token, secret_as_hex, algorithms=["HS256"])
-                print("--- DEBUG: Authenticated via Hexadecimal Secret ---")
-            except Exception as e:
-                print(f"--- DEBUG: Both secret methods failed. Last error: {str(e)} ---")
-                raise AuthenticationFailed("Invalid signature: Secret mismatch.")
-        except jwt.DecodeError:
-            raise AuthenticationFailed("Malformed token structure.")
-        except jwt.ExpiredSignatureError:
-            raise AuthenticationFailed("Token has expired.")
+            except:
+                raise AuthenticationFailed("Invalid signature: Secret mismatch between Spring and Django.")
         except Exception as e:
             raise AuthenticationFailed(f"Auth error: {str(e)}")
 
-        # --- FALLBACK LOGIC END ---
-
         if payload:
-         return (SpringUser(payload), None)
+            return (SpringUser(payload), None)
+        return None
+        
+        # # Method 1: Try decoding as standard UTF-8 string (Matches SECRET.getBytes())
+        # try:
+        #     payload = jwt.decode(token, raw_secret.encode('utf-8'), algorithms=["HS256"])
+        #     print("--- DEBUG: Authenticated via UTF-8 String Secret ---")
+        # except jwt.InvalidSignatureError:
+        #     # Method 2: Try decoding as Hex bytes (Common if the secret is a hash string)
+        #     try:
+        #         secret_as_hex = bytes.fromhex(raw_secret)
+        #         payload = jwt.decode(token, secret_as_hex, algorithms=["HS256"])
+        #         print("--- DEBUG: Authenticated via Hexadecimal Secret ---")
+        #     except Exception as e:
+        #         print(f"--- DEBUG: Both secret methods failed. Last error: {str(e)} ---")
+        #         raise AuthenticationFailed("Invalid signature: Secret mismatch.")
+        # except jwt.DecodeError:
+        #     raise AuthenticationFailed("Malformed token structure.")
+        # except jwt.ExpiredSignatureError:
+        #     raise AuthenticationFailed("Token has expired.")
+        # except Exception as e:
+        #     raise AuthenticationFailed(f"Auth error: {str(e)}")
+
+        # # --- FALLBACK LOGIC END ---
+
+        # if payload:
+        #  return (SpringUser(payload), None)
         
