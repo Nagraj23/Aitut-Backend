@@ -30,26 +30,25 @@ public class EmailService {
         }
     }
     @Async
-    public void sendActivationEmail(String to, String name, String token) {
+    public void sendWelcomeEmail(String to, String name, String password) {
         try {
-            // Replace with your actual frontend URL (e.g., http://localhost:5173/activate)
-            String activationUrl = "https://ai-tut.com/activate?token=" + token;
-
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
             helper.setTo(to);
-            helper.setSubject("Welcome to Ai-Tut! Activate your account 🚀");
+            helper.setSubject("Welcome to Ai-Tut! Your account is ready 🚀");
             helper.setFrom("no-reply@ai-tut.com");
-            helper.setText(buildActivationHtml(name, activationUrl), true);
+
+            // Pass the email and password to the HTML builder
+            helper.setText(buildWelcomeHtml(name, to, password), true);
 
             mailSender.send(message);
         } catch (Exception e) {
-            throw new RuntimeException("Failed to send Ai-Tut activation email 💀", e);
+            throw new RuntimeException("Failed to send Ai-Tut welcome email 💀", e);
         }
     }
 
-    private String buildActivationHtml(String name, String url) {
+    private String buildWelcomeHtml(String name, String email, String password) {
         return """
              <!DOCTYPE html>
              <html>
@@ -65,19 +64,25 @@ public class EmailService {
                        </tr>
                        <tr>
                          <td style="padding:40px;color:#1f2937;">
-                           <h2 style="margin:0;font-size:24px;">Welcome, %s!</h2>
+                           <h2 style="margin:0;font-size:24px;">Welcome to the Team, %s!</h2>
                            <p style="margin-top:20px;font-size:16px;line-height:1.6;">
-                             Your Training and Placement Officer (TPO) has added you to the <b>Ai-Tut</b> platform. 
-                             To get started with your placement preparation and AI-driven roadmaps, please set up your account password.
+                             Your TPO has registered you on <b>Ai-Tut</b>. Your account is already verified and active. 
+                             You can log in immediately using the credentials below:
                            </p>
+                           
+                           <div style="background:#f3f4f6; padding: 20px; border-radius: 8px; margin: 25px 0;">
+                             <p style="margin: 5px 0;"><strong>Email:</strong> %s</p>
+                             <p style="margin: 5px 0;"><strong>Password:</strong> <span style="color:#4f46e5; font-family: monospace; font-size: 18px;">%s</span></p>
+                           </div>
+
                            <div style="margin:35px 0;text-align:center;">
-                             <a href="%s" style="background-color:#4f46e5;color:white;padding:15px 30px;text-decoration:none;font-size:18px;font-weight:bold;border-radius:8px;display:inline-block;">
-                               Activate My Account
+                             <a href="https://ai-tut.com/login" style="background-color:#4f46e5;color:white;padding:15px 30px;text-decoration:none;font-size:18px;font-weight:bold;border-radius:8px;display:inline-block;">
+                               Login Now
                              </a>
                            </div>
-                           <p style="font-size:13px;color:#6b7280;">
-                             If the button doesn't work, copy and paste this link into your browser:<br>
-                             <a href="%s" style="color:#4f46e5;">%s</a>
+                           
+                           <p style="font-size:14px;color:#ef4444;text-align:center;">
+                             <b>Note:</b> For security, please complete your profile and update your password after logging in.
                            </p>
                          </td>
                        </tr>
@@ -92,9 +97,8 @@ public class EmailService {
                </table>
              </body>
              </html>
-        """.formatted(name, url, url, url);
+        """.formatted(name, email, password);
     }
-
     private String buildOtpHtml(String name, String otp) {
         return """
              <!DOCTYPE html>

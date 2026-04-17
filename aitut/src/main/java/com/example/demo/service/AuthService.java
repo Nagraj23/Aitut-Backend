@@ -397,39 +397,6 @@ public class AuthService {
         emailService.sendOtpEmail(email, subject, name, otp);
     }
 
-    public Users createStudentByTPO(StudentRequestDTO dto) {
-        // 1. Create User object and map all fields
-        Users student = Users.builder()
-                .email(dto.getEmail())
-                .name(dto.getName())
-                .invitedBy(dto.getTpoId())                .role(Users.Role.STUDENT)
-                .verified(false) // Keeps them from logging in initially
-
-                // Mapping the academic fields you mentioned
-                .college(dto.getCollege())
-                .department(dto.getDepartment())
-                .university(dto.getUniversity())
-                .specialization(dto.getSpecialization())
-                .year(dto.getYear())
-                // Additional fields if they are in your DTO
-
-                .build();
-        String tempPassword = UUID.randomUUID().toString();
-        student.setPassword(encoder.encode(tempPassword));
-
-        // 3. Save student
-        Users savedStudent = repo.save(student);
-
-        // 4. Create and save the token
-        String token = UUID.randomUUID().toString();
-        tokenService.createToken(savedStudent, token);
-
-// Now call the new email method
-        emailService.sendActivationEmail(savedStudent.getEmail(), savedStudent.getName(), token);
-
-        return savedStudent;
-    }
-
     @Transactional
     public void activateStudentAccount(String token, String newPassword) {
         // 1. Validate the token via the service
@@ -465,19 +432,17 @@ public class AuthService {
     }
     @Transactional
     public void inviteBulkStudents(BulkRequest bulkRequest) {
-        // 1. Optional: Verify if the TPO exists
+        // 1. Get the TPO who is performing the action
         Users tpo = repo.findById(UUID.fromString(bulkRequest.getTpoId()))
-                .orElseThrow(() -> new RuntimeException("TPO not found with ID: " + bulkRequest.getTpoId()));
+                .orElseThrow(() -> new RuntimeException("TPO not found"));
 
         for (StudentBasicInfo studentInfo : bulkRequest.getStudents()) {
             try {
-                // 2. Check for duplicate email to avoid DataIntegrityViolation
                 if (repo.existsByEmail(studentInfo.getEmail())) {
-                    System.out.println("Skipping duplicate email: " + studentInfo.getEmail());
                     continue;
                 }
 
-                // 3. Build the Student Entity using Common Data + Individual Data
+                String defaultPassword = studentInfo.getEmail();
                 Users student = Users.builder()
                         .name(studentInfo.getName())
                         .email(studentInfo.getEmail())
@@ -487,27 +452,22 @@ public class AuthService {
                         .department(bulkRequest.getDepartment())
                         .courseDuration(bulkRequest.getCourseDuration())
                         .targetCourse(bulkRequest.getTargetCourse())
-                        .invitedBy(tpo.getId()) // Link to the TPO
+                        // Metadata
+                        .invitedBy(tpo.getId())
                         .role(Users.Role.STUDENT)
-                        .verified(false)
-                        .isComplete(false)
+                        .verified(true)        // <--- Verified immediately!
+                        .isComplete(false)     // False so they must finish profile info
                         .createdAt(LocalDateTime.now())
-                        .password(encoder.encode(UUID.randomUUID().toString())) // Dummy password
+                        .password(encoder.encode(defaultPassword))
                         .build();
 
-                Users savedStudent = repo.save(student);
+                repo.save(student);
 
-                // 4. Generate and Save Verification Token
-                String token = UUID.randomUUID().toString();
-                VerificationToken verificationToken = new VerificationToken(token, savedStudent);
-                tokenrepo.save(verificationToken);
-
-                // 5. Send Activation Email (@Async is crucial here!)
-                emailService.sendActivationEmail(savedStudent.getEmail(), savedStudent.getName(), token);
+                // 3. Send Welcome Email with their credentials
+                emailService.sendWelcomeEmail(student.getEmail(), student.getName(), defaultPassword);
 
             } catch (Exception e) {
-                // Log error for this specific student but keep the loop running
-                System.err.println("Error inviting " + studentInfo.getEmail() + ": " + e.getMessage());
+                System.err.println("Error adding " + studentInfo.getEmail() + ": " + e.getMessage());
             }
         }
     }

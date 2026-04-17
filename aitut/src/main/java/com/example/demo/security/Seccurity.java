@@ -54,7 +54,7 @@ public class Seccurity {
         org.springframework.web.cors.CorsConfiguration configuration = new org.springframework.web.cors.CorsConfiguration();
 
         // Allow your React frontend URL
-        configuration.setAllowedOrigins(java.util.List.of("http://localhost:5173", "http://localhost:3000","http://10.211.62.135:8080"));
+        configuration.setAllowedOrigins(java.util.List.of("http://localhost:5173", "http://localhost:3000","http://10.73.213.135:8080"));
         configuration.setAllowedMethods(java.util.List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(java.util.List.of("Authorization", "Content-Type"));
         configuration.setAllowCredentials(true);

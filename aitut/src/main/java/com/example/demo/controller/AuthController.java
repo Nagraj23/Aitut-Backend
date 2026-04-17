@@ -48,26 +48,13 @@ public class AuthController {
         return ResponseEntity.ok(result);
     }
 
-    @PostMapping("/tpo/invite-student")
-    public ResponseEntity<Users> inviteStudent(@RequestBody StudentRequestDTO request) {
-        return ResponseEntity.ok(authService.createStudentByTPO(request));
+    @PostMapping("/tpo/invite-bulk")
+    public ResponseEntity<String> inviteBulkStudents(@RequestBody BulkRequest bulkRequest) {
+        authService.inviteBulkStudents(bulkRequest);
+        return ResponseEntity.ok("Students added and welcome emails sent successfully!");
     }
 
-    // 🧩 STEP 3: Student clicks link, Frontend verifies token is valid
-    @GetMapping("/verify-activation-token")
-    public ResponseEntity<String> verifyActivationToken(@RequestParam String token) {
-        // Correct way: Go through authService to get to the token logic
-        return authService.getTokenService().validateToken(token).isPresent()
-                ? ResponseEntity.ok("Token is valid")
-                : ResponseEntity.status(410).body("Token expired or invalid");
-    }
 
-    // 🧩 STEP 5: Student submits new password
-    @PostMapping("/activate-account")
-    public ResponseEntity<String> activateAccount(@RequestBody ActivationRequestDTO request) {
-        authService.activateStudentAccount(request.getToken(), request.getPassword());
-        return ResponseEntity.ok("Account activated! You can now login.");
-    }
 
     @PostMapping("/google-login")
     public ResponseEntity<AuthResponse> googleLogin(@RequestBody Map<String, String> request) {
@@ -77,13 +64,6 @@ public class AuthController {
         // Now this matches the 1 parameter the Service expects!
         return ResponseEntity.ok(authService.googleLogin(token));
     }
-
-    @PostMapping("/tpo/invite-bulk")
-    public ResponseEntity<String> inviteBulkStudents(@RequestBody BulkRequest bulkRequest) {
-        authService.inviteBulkStudents(bulkRequest);
-        return ResponseEntity.ok("Bulk invitation process started successfully!");
-    }
-
     // ✅ Update profile
  // 1. Route for Personal/Basic Details
 @PutMapping("/update-profile/basic/{userId}")
