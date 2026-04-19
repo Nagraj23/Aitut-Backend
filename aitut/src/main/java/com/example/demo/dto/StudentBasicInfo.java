@@ -6,6 +6,5 @@ import lombok.Data;
 public class StudentBasicInfo {
     private String name;
     private String email;
-    private String specialization;
     private int year;
 }

@@ -127,10 +127,8 @@ async def ask_teacher(
     request: TutorRequest, 
     db: Session = Depends(get_db)
 ):
-    # 1. Standardize subject name for DB lookup
     clean_name = subject_name.strip().lower().replace(" ", "_")
 
-    # 2. Find the Subject in your SQL Table
     subj = db.query(models.Subject).filter(
         models.Subject.dept_id == dept.lower(),
         models.Subject.year == year,
@@ -138,17 +136,15 @@ async def ask_teacher(
     ).first()
 
     if not subj:
-        raise HTTPException(status_code=404, detail="Subject not found in database")
+        raise HTTPException(status_code=404, detail="Subject not found")
 
-    # 3. Handle Chat Session (using your UUID-based ChatSession model)
     session = db.query(models.ChatSession).filter(
-        models.ChatSession.user_id == request.user_id, # <-- User Filter
+        models.ChatSession.user_id == request.user_id,
         models.ChatSession.subject_id == subj.id,
-        models.ChatSession.day_number == day           # <-- Day Filter
+        models.ChatSession.day_number == day
     ).first()
 
     if not session:
-        print(f"🆕 [API] Creating new Day {day} session for {request.user_id}")
         session = models.ChatSession(
             user_id=request.user_id,
             subject_id=subj.id,
@@ -162,42 +158,48 @@ async def ask_teacher(
     history_objs = db.query(models.Message).filter(
         models.Message.session_id == session.id
     ).order_by(models.Message.timestamp.desc()).limit(6).all()
-   
+
     chat_context = [{"role": m.role, "content": m.content} for m in reversed(history_objs)]
 
-    async def generate_and_save():
-        full_ai_message = ""
-        
-        gen = RAGService.get_teacher_response(
-            question=request.message, 
-            university=uni, branch=dept, year=year, 
-            subject=clean_name, daily_task={"day": day, "topic": request.topic, "task": request.task},
-            history=chat_context 
-        )
+    # 🔥 GET FULL RESPONSE
+    gen = RAGService.get_teacher_response(
+        question=request.message,
+        university=uni,
+        branch=dept,
+        year=year,
+        subject=clean_name,
+        daily_task={"day": day, "topic": request.topic, "task": request.task},
+        history=chat_context
+    )
 
-        for chunk in gen:
-            full_ai_message += chunk
-            yield chunk  # This sends text chunks to the UI
+    full_response = "".join([chunk for chunk in gen])
 
-        try:
-            # Import your SessionLocal from your database.py
-            from db.database import SessionLocal 
-            
-            with SessionLocal() as save_db:
-                user_content = request.message if request.message.strip() else f"Started: {request.topic}"
-                
-                new_user_msg = models.Message(session_id=session.id, role="user", content=user_content)
-                new_ai_msg = models.Message(session_id=session.id, role="assistant", content=full_ai_message)
-                
-                save_db.add(new_user_msg)
-                save_db.add(new_ai_msg)
-                save_db.commit()
-                logger.info(f"✅ Conversation saved for session {session.id}")
-        except Exception as e:
-            logger.error(f"Post-stream save error: {e}")
+    # 💾 SAVE
+    try:
+        user_content = request.message if request.message.strip() else f"Started: {request.topic}"
 
-    return StreamingResponse(generate_and_save(), media_type="text/plain")
-    
+        db.add(models.Message(
+            session_id=session.id,
+            role="user",
+            content=user_content
+        ))
+
+        db.add(models.Message(
+            session_id=session.id,
+            role="assistant",
+            content=full_response
+        ))
+
+        db.commit()
+
+    except Exception as e:
+        logger.error(f"Save error: {e}")
+
+    # ✅ RETURN CLEAN JSON
+    return {
+        "answer": full_response
+    }
+   
 @router.get("/speak")
 async def speak(text: str, voice: str = "en-IN-NeerjaNeural"):
     """

@@ -73,10 +73,11 @@ class Roadmap(models.Model):
     """
     The parent container for the learning plan.
     """
+    subject = models.CharField(max_length=255, null=True, blank=True)
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     knowledge_graph = models.ForeignKey(UserKnowledgeGraph, on_delete=models.CASCADE, null=True, blank=True)
     spring_user_id = models.CharField(max_length=255)
-    
+   
     title = models.CharField(max_length=255)
     overview = models.TextField()
     full_data = models.JSONField()            # Full AI response for backup

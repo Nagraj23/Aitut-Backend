@@ -298,7 +298,8 @@ class GenerateRoadmapView(APIView):
                 knowledge_graph=graph,
                 spring_user_id=user_id,
                 title=roadmap_data.get("title", f"Phase {phase}: {subject.upper()}"),
-                full_data=roadmap_data
+                full_data=roadmap_data,
+                subject=subject 
             )
 
             # 7. BULK CREATE TASKS

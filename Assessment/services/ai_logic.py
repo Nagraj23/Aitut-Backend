@@ -302,12 +302,7 @@ def generate_deep_roadmap(user_id, role="student", subject_id=None, phase_number
         raise ValueError(f"Roadmap Generation Failed: {str(e)}")
     
 def get_existing_roadmap_data(user_id):
-    """
-    Fetches the latest roadmap and its tasks from the DB 
-    and reconstructs the JSON format for the mobile frontend.
-    """
     try:
-        # 1. Get the most recent roadmap object
         roadmap_obj = Roadmap.objects.filter(
             spring_user_id=user_id
         ).order_by('-id').first()
@@ -315,27 +310,30 @@ def get_existing_roadmap_data(user_id):
         if not roadmap_obj:
             return None
 
-        # 2. Fetch all tasks associated with this roadmap
-        tasks = RoadmapTask.objects.filter(roadmap=roadmap_obj).order_by('day_number')
+        tasks = RoadmapTask.objects.filter(
+            roadmap=roadmap_obj
+        ).order_by('day_number')
 
-        # 3. Reconstruct the daily_plan list
         daily_plan = []
+
         for task in tasks:
             daily_plan.append({
                 "day": task.day_number,
                 "topic": task.topic,
                 "task": task.task_description,
-                 "subject": getattr(task, 'subject', None), 
-                "type": task.phase_name,  # Le,arning, Test, etc.
+                "type": task.phase_name,
                 "is_completed": getattr(task, 'is_completed', False)
             })
 
-        # 4. Return formatted response (matches what GenerateDeepRoadmap creates)
+        # 🔥 TAKE SUBJECT FROM FIRST TASK (or roadmap if available)
+        subject = roadmap_obj.subject
+
         return {
             "roadmap_id": roadmap_obj.id,
+            "subject": subject,   # ✅ TOP LEVEL NOW
             "title": roadmap_obj.title,
             "overview": roadmap_obj.overview,
-            "progress": getattr(roadmap_obj, 'progress', 0), # Uses progress if field exists
+            "progress": getattr(roadmap_obj, 'progress', 0),
             "daily_plan": daily_plan
         }
 
