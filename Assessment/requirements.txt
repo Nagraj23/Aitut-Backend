@@ -1,0 +1,10 @@
+Django>=5.0
+djangorestframework>=3.14
+djangorestframework-simplejwt>=5.3
+django-cors-headers>=4.3
+psycopg2-binary>=2.9
+groq>=0.4
+chromadb>=0.5
+PyJWT>=2.8
+python-dotenv>=1.0
+gunicorn>=21.2

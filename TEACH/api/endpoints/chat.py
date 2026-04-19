@@ -159,18 +159,15 @@ async def ask_teacher(
         db.commit()
         db.refresh(session)
 
-    # 4. Fetch History from Message Model (Limit to last 6 for context)
     history_objs = db.query(models.Message).filter(
         models.Message.session_id == session.id
     ).order_by(models.Message.timestamp.desc()).limit(6).all()
-    
-    # Format history for the AI (Oldest to Newest)
+   
     chat_context = [{"role": m.role, "content": m.content} for m in reversed(history_objs)]
 
     async def generate_and_save():
         full_ai_message = ""
         
-        # This is your generator from RAGService
         gen = RAGService.get_teacher_response(
             question=request.message, 
             university=uni, branch=dept, year=year, 
@@ -182,7 +179,6 @@ async def ask_teacher(
             full_ai_message += chunk
             yield chunk  # This sends text chunks to the UI
 
-        # 6. Save to DB only AFTER the stream is complete
         try:
             # Import your SessionLocal from your database.py
             from db.database import SessionLocal 
@@ -200,7 +196,6 @@ async def ask_teacher(
         except Exception as e:
             logger.error(f"Post-stream save error: {e}")
 
-    # 7. Return as a Stream
     return StreamingResponse(generate_and_save(), media_type="text/plain")
     
 @router.get("/speak")
@@ -242,11 +237,9 @@ async def wrapup_chat_session(session_id: str, db: Session = Depends(get_db)):
         for msg in messages
     ]
 
-    # 4. Generate Recap (Mastered topics & Loopholes)
     try:
         recap = RAGService.generate_daily_recap(history_data)
         
-        # 5. Update the Database row
         setattr(session, 'is_completed', True)
         setattr(session, 'mastered_topics', recap.get("mastered", []))
         setattr(session, 'loopholes', recap.get("loopholes", []))

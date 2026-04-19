@@ -9,7 +9,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 # settings.py
-ALLOWED_HOSTS = ['10.139.12.44', '192.168.42.129', 'localhost', '127.0.0.1', '*']
+ALLOWED_HOSTS = ['10.139.12.44', '10.108.86.191', 'localhost', '127.0.0.1', '*']
 
 CORS_ALLOW_ALL_ORIGINS = True
 
@@ -39,6 +39,9 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
     ],
 }
 

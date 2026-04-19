@@ -43,59 +43,61 @@ def get_syllabus_from_chroma(subject_id, user_goal="Complete syllabus mastery", 
         print(f"Error: {e}")
         return None
     
-def generate_diagnostic(domain, university, day_number, previous_loopholes=None):
+def generate_assessment(domain, tier, assessment_type="ONBOARDING", previous_loopholes=None, chat_context=None):
     """
-    Generates a 10-question test. 
-    If previous_loopholes (list) is provided, it crafts specific questions to re-test those gaps.
+    Tier-based Blitz (Easy/Med/Hard) for Onboarding 
+    OR Chat-context driven Weekly Reinforcement.
     """
-    print(f"DEBUG: Generating Day {day_number} for {domain}")
+    
+    tier_depth = {
+        "EASY": "Focus on core syntax, fundamental principles, and 'The Why' behind basic operations.",
+        "MEDIUM": "Focus on logic flow, data handling, error management, and architecture.",
+        "HARD": "Focus on performance optimization, security, edge cases, and complex system troubleshooting."
+    }
 
-    # Logic-based difficulty scaling
-    if day_number <= 2:
-        level = "Introductory (Fundamentals & Syntax)"
-    elif day_number <= 5:
-        level = "Intermediate (Architecture & Logic)"
+    # Weekly Reinforcement Logic
+    if assessment_type == "WEEKLY":
+        context_prompt = f"""
+        WEEKLY PROTOCOL:
+        1. CONCEPTS MASTERED IN RECENT SESSIONS: {chat_context if chat_context else 'General curriculum'}
+        2. RESIDUAL LOOPHOLES FROM PREVIOUS TESTS: {', '.join(previous_loopholes) if previous_loopholes else 'None'}
+        
+        INSTRUCTION: 
+        You are verifying the student's actual retention of this week's topics. 
+        - 7 questions must challenge the concepts they claimed to 'master' in chat sessions.
+        - 3 questions must revisit their previous loopholes to ensure they haven't relapsed.
+        """
     else:
-        level = "Advanced (Optimization & Troubleshooting)"
-
-    # Adaptive Instruction: If they failed something yesterday, hit it again today.
-    adaptive_retest = ""
-    if previous_loopholes and len(previous_loopholes) > 0:
-        adaptive_retest = f"\nCRITICAL: The student struggled with these specific concepts previously: {', '.join(previous_loopholes)}. Dedicate 2 MCQs and 1 Descriptive question to re-evaluating these loopholes specifically."
+        # Initial Blitz Logic
+        context_prompt = f"""
+        DIAGNOSTIC PROTOCOL:
+        - Goal: Establish a technical baseline for {domain}.
+        - Level: {tier} - {tier_depth.get(tier)}
+        - Ensure questions require logical reasoning rather than just memory recall.
+        """
 
     prompt = f"""
-    You are a world-class educational psychologist and technical interviewer. 
-    Generate Day {day_number} of a 7-day diagnostic series for a {domain} student at {university}.
-    
-    Current Phase: Day {day_number} - {level} {adaptive_retest}
-    
-    Rules:
-    1. Generate exactly 6 MCQs: Focus on logical application and real-world edge cases.
-    2. Generate exactly 4 Descriptive questions: Use ELI5 (Explain Like I'm 5) or "Scenario-based troubleshooting" prompts.
-    3. Ensure questions are practical, not just theoretical definitions.
+    You are a Senior Technical Lead and Educational Psychologist. 
+    Generate a 10-question {assessment_type} for an individual learning {domain}.
+
+    {context_prompt}
+
+    RULES:
+    1. 6 MCQs: No 'all of the above' answers. Use scenario-based options.
+    2. 4 Descriptive: Use 'Scenario Troubleshooting' (e.g., 'Your app is doing X, how do you fix Y?') or 'ELI5' prompts.
+    3. Ensure a mix of coding logic and high-level conceptual understanding.
     4. Output ONLY valid JSON. No conversational filler.
 
-    Structure:
+    FORMAT:
     {{
-      "day": {day_number},
-      "level": "{level}",
+      "tier": "{tier}",
+      "type": "{assessment_type}",
       "questions": [
-        {{ 
-          "id": 1, 
-          "type": "mcq", 
-          "question": "...", 
-          "options": ["A) ...", "B) ...", "C) ...", "D) ..."], 
-          "answer": "A" 
-        }},
-        {{ 
-          "id": 7, 
-          "type": "descriptive", 
-          "question": "..." 
-        }}
+        {{ "id": 1, "type": "mcq", "question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], "answer": "A" }},
+        {{ "id": 7, "type": "descriptive", "question": "..." }}
       ]
     }}
     """
-    
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -105,37 +107,49 @@ def generate_diagnostic(domain, university, day_number, previous_loopholes=None)
         
         content = response.choices[0].message.content
         if not content:
-            raise ValueError("The AI returned an empty response.")
+            return None
+            
+        data = json.loads(content)
+        # Ensure we return the 'questions' list specifically
+        return data.get("questions") 
         
-        return json.loads(content)
     except Exception as e:
-        raise ValueError(f"Groq generation failed: {str(e)}")
+        print(f"Groq Generation Error: {e}")
+        return None
+    # ... (Client execution logic same as before)
 
-
-def evaluate_answer(question, student_answer):
+def evaluate_answer(question, student_answer, domain):
     """
-    Deep evaluation of a descriptive answer. 
-    Categorizes the error type to determine roadmap priorities on Day 8.
+    Dynamically evaluates answers based on the specific assessment domain.
     """
     
     prompt = f"""
-    As an expert technical tutor, analyze this student's answer.
-    
+    As a Senior {domain} Specialist and Architect, perform a high-standard forensic analysis 
+    of this student's answer for a 50-day elite roadmap.
+
+    Current Domain: {domain}
     Question: {question}
     Student Answer: {student_answer}
 
-    Task:
-    1. Categorize the error: Is it "Conceptual" (doesn't get the 'why'), "Logic" (process is wrong), or "Syntax" (coding/grammar error)?
-    2. Identify the specific knowledge gap.
+    EVALUATION CRITERIA:
+    1. DEPTH: Does the user mention internal mechanics, advanced patterns, or performance trade-offs relevant to {domain}?
+    2. PRECISION: Are they using exact industry terminology?
+    3. CRITICAL GAPS: What key technical nuances did they NOT mention that a lead developer in {domain} should know?
 
     Return ONLY JSON:
     {{
       "level": "Strong" | "Intermediate" | "Weak",
+      "depth_rating": 1-10,
       "error_type": "Conceptual" | "Logic" | "Syntax" | "None",
-      "concept_mastered": "Specific technical topic explained well (max 5 words)",
-      "knowledge_gap": "The core technical concept they missed (max 5 words) or null if Strong",
-      "root_cause": "A brief explanation of why the answer is incorrect/incomplete",
-      "feedback": "One helpful, encouraging sentence."
+      "mastered_topics": [], 
+      "critical_gaps": [],    
+      "root_cause": "Technical explanation of the rating level",
+      "roadmap_directives": {{
+          "immediate_fixes": ["Concept for Day 1-10"],
+          "advanced_mastery": ["Concept for Day 20-40"],
+          "project_challenge": "A mini-project idea to prove mastery"
+      }},
+      "feedback": "Direct, professional feedback on what is missing for 'Senior' level mastery."
     }}"""
     
     try:
@@ -153,21 +167,20 @@ def evaluate_answer(question, student_answer):
     except Exception as e:
         raise ValueError(f"Evaluation failed: {str(e)}")
     
-def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=None, phase_number=1):
+def generate_deep_roadmap(user_id, role="student", subject_id=None, phase_number=1):
     # Using Llama 3.3 70B for better reasoning and larger output limit
     client = Groq(api_key=settings.GROQ_API_KEY)
     
     if role == "student":
-        goal = user_preferences.get('goal', 'Complete syllabus mastery')
+        # goal is now a direct variable, not from user_preferences
         target_unit_names = "Units 1, 2, and 3" if phase_number == 1 else "Units 4, 5, and 6"
         
-        # Fetching context (Ensure n_results is high enough)
-        syllabus_context = get_syllabus_from_chroma(subject_id, user_goal=goal)
+        # Fetching context
+        syllabus_context = get_syllabus_from_chroma(subject_id, )
         
         if not syllabus_context:
             raise ValueError(f"Could not retrieve context for {subject_id}")
 
-        # --- THE UPDATED STRICT PROMPT ---
         prompt = f"""
         You are a Senior Academic Mentor. Generate a PURE JSON roadmap for PHASE {phase_number}.
         
@@ -186,7 +199,7 @@ def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=
            - Days 1-5: Learning (Unit 1)
            - Day 6: Weekly Assessment Test (Type: "Test")
            - Day 7: Revision & Backlog Clear (Type: "Free")
-           - Days 8: Learning (Finish Unit 1)
+           - Day 8: Learning (Finish Unit 1)
            - Days 9-12: Learning (Unit 2)... continue this pattern.
         4. NANOTECHNOLOGY: {'If Phase 2, Unit 6 (Carbon Nanotubes/CNT) must span at least 6 detailed days.' if phase_number == 2 else ''}
 
@@ -210,8 +223,8 @@ def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=
         try:
             response = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
-                model="llama-3.3-70b-versatile", # Switched to 3.3 for larger context/output
-                temperature=0.3, # Slightly higher for better task breakdown
+                model="llama-3.3-70b-versatile",
+                temperature=0.3,
                 response_format={"type": "json_object"}
             )
             
@@ -222,25 +235,30 @@ def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=
             print(f"❌ Error: {e}")
             return None
 
-    
-    # 2. PATH B: INDIVIDUAL (DIAGNOSTIC-BASED)
     else:
-        from db.models import UserKnowledgeGraph # Import here to avoid circular imports
+        # PATH B: INDIVIDUAL (DIAGNOSTIC-BASED)
+        from db.models import UserKnowledgeGraph, AssessmentSWOT
+    
         graph = UserKnowledgeGraph.objects.get(spring_user_id=user_id)
+        swots = AssessmentSWOT.objects.filter(spring_user_id=user_id)
+        all_loopholes = []
+        
+        for s in swots:
+            loopholes = getattr(s, 'critical_loopholes', [])
+            if loopholes:
+                all_loopholes.extend(loopholes)
         
         prompt = f"""
         You are a Senior Technical Architect. Create a deep learning roadmap based on a 7-day diagnostic.
 
         STUDENT DATA:
         - Domain: {graph.domain}
-        - Critical Loopholes: {graph.critical_loopholes}
+        - Critical Loopholes: {all_loopholes}
         - Mastered Concepts: {graph.mastery_scores}
         - Primary Error Type: {graph.top_error_type}
         
-        LOGISTICS:
-        - Goal: {user_preferences.get('goal')}
-        - Daily Commitment: {user_preferences.get('daily_hours')} hours
-        - Duration: {user_preferences.get('total_days')} days
+       
+        - Duration: 25 days
 
         RULES:
         1. Phase 1 (Remediation): First 20% of time fixing "Critical Loopholes".
@@ -266,25 +284,21 @@ def generate_deep_roadmap(user_id, user_preferences, role="student", subject_id=
         }}
         """
 
-    # 3. EXECUTION & ERROR HANDLING
     try:
         response = client.chat.completions.create(
-            model=settings.CHAT_MODEL, # Uses "llama-3.1-8b-instant" from your config
+            model=settings.CHAT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"}
         )
         
-        # Capture content for Type-Safety (Fixes the VS Code Red Squiggle)
         content = response.choices[0].message.content
         
         if content is None:
-            raise ValueError("Groq returned empty content. Verify API status.")
+            raise ValueError("Groq returned empty content.")
 
-        # Return the parsed JSON
         return json.loads(content)
         
     except Exception as e:
-        # Catching everything from JSON errors to API timeouts
         raise ValueError(f"Roadmap Generation Failed: {str(e)}")
     
 def get_existing_roadmap_data(user_id):
@@ -311,6 +325,7 @@ def get_existing_roadmap_data(user_id):
                 "day": task.day_number,
                 "topic": task.topic,
                 "task": task.task_description,
+                 "subject": getattr(task, 'subject', None), 
                 "type": task.phase_name,  # Le,arning, Test, etc.
                 "is_completed": getattr(task, 'is_completed', False)
             })
