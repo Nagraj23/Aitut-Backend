@@ -12,6 +12,7 @@ import java.util.UUID;
 public class JWTService {
 
     // Must be at least 64 characters for HS256 algorithm
+//    private final String SECRET = "fcac35f0013bd448bd10a736ef73a6e125aa9d585aef1bc01a01b210c9ddefb2";
     private final String SECRET = "fcac35f0013bd448bd10a736ef73a6e125aa9d585aef1bc01a01b210c9ddefb2";
     private final long EXPIRATION = 1000 * 60 * 60 * 24; // 24 hours
 

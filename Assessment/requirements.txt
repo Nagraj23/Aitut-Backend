@@ -1,0 +1,11 @@
+Django==5.2.13
+djangorestframework==3.17.1
+django-cors-headers==4.9.0
+python-dotenv==1.2.2
+psycopg2-binary==2.9.11
+PyJWT==2.12.1
+groq
+chromadb
+requests
+numpy
+pandas

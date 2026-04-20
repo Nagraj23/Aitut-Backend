@@ -21,8 +21,8 @@ class GenerateTestView(APIView):
             is_completed=True
         ).count()
 
-        if completed_days >= 7:
-            return Response({"message": "7-day onboarding complete!", "onboarding_finished": True}, status=200)
+        if completed_days >= 3:
+            return Response({"message": "3-day onboarding complete!", "onboarding_finished": True}, status=200)
 
         current_day = completed_days + 1
 
@@ -113,7 +113,7 @@ class SubmitAnswersView(APIView):
             is_completed=True
         ).count()
         
-        if completed_count >= 7:
+        if completed_count >= 3:
             all_swots = DailySWOT.objects.filter(
                 spring_user_id=request.user.id, 
                 assessment__domain=assessment.domain
@@ -141,7 +141,7 @@ class SubmitAnswersView(APIView):
                 }
             )
 
-        return Response({"status": "Success", "onboarding_finished": completed_count >= 7}, status=201)
+        return Response({"status": "Success", "onboarding_finished": completed_count >= 3}, status=201)
 
 class GenerateRoadmapView(APIView):
     def post(self, request):
