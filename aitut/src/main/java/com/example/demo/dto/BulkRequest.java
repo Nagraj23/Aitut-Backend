@@ -10,7 +10,7 @@ public class BulkRequest {
     private String university;
     private String department;
     private String courseDuration;
-    private String targetCourse;
+    // private String targetCourse;
     private String tpoId;
 
     // Individual Student Data

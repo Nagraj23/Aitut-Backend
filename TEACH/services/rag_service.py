@@ -147,6 +147,7 @@ class RAGService:
 
     context = ""
 
+    # ================== 🔍 VECTOR SEARCH ==================
     try:
         q_embedding = embedding_model.encode(query_text).tolist()
 
@@ -169,8 +170,7 @@ class RAGService:
         logger.info(f"[RESULT COUNT] {len(raw_docs)} chunks retrieved")
 
         if not raw_docs:
-            logger.warning("[CONTEXT] No documents found for this query.")
-            context = "No specific data found in the uploaded textbooks for this exact topic."
+            context = "NO_TEXTBOOK_DATA_FOUND"
         else:
             context_parts = []
 
@@ -178,7 +178,6 @@ class RAGService:
                 source = raw_meta[i].get("file_name", "Unknown Source")
                 page = raw_meta[i].get("page", "N/A")
 
-                # 🔥 LOG EACH SOURCE BEING USED
                 logger.info(f"[SOURCE USED] File: {source} | Page: {page}")
 
                 context_parts.append(
@@ -187,69 +186,76 @@ class RAGService:
 
             context = "\n\n".join(context_parts)
 
-        # 🔥 OPTIONAL: log full context preview (trimmed)
-        logger.debug(f"[CONTEXT PREVIEW]\n{context[:1000]}")
-
     except Exception as e:
         logger.error(f"[DB ERROR] {str(e)}")
-        return f"Database Error: {str(e)}"
+        return {"answer": f"Database Error: {str(e)}"}
 
+    # ================== 🧠 SYSTEM PROMPT ==================
     system_prompt = f"""
-    You are the Lead Human AI Tutor for the Ai-Tut platform. 
-    Current Goal: Teach "{topic}" (Day {daily_task.get('day')}).
-    Target Task: {task}
+You are the Lead Human AI Tutor.
 
-    TUTORING PROTOCOL (THE HUMAN TOUCH):
-    1. PROACTIVE START: If the student says "hi" or "let's start", introduce Day {daily_task.get('day')} warmly. Don't wait for a question.
-    2. CONVERSATIONAL CHUNKING: Explain ONE concept at a time in 2-3 engaging paragraphs. Do not dump a whole chapter.
-    3. INTERACTIVE: End every message with a question like "Does that make sense?" or a mini-quiz to check their understanding.
-    4. TONE: Supportive, academic, and professional. Speak like a mentor, not a search engine.
+Teach "{topic}" (Day {daily_task.get('day')}).
 
-    KNOWLEDGE RULES (THE MULTI-PDF RESEARCHER):
-    1. MULTI-SOURCE MERGING: You have access to 3 Physics textbooks in the context. Compare them! If Text 1 has a great definition but Text 2 has a better analogy, MERGE them into one clear explanation.
-    2. STRICT GROUNDING: Use the 'CONTEXT FROM NOTES' below as your primary source of truth. 
-    3. MISSING DATA HANDLING: If the provided context is empty or says 'NO_TEXTBOOK_DATA_FOUND', you MUST start your response with this exact disclaimer: 
-       "⚠️ **Note: This information is not in your uploaded textbooks. This response is auto-generated based on general {subject} principles.**" 
-       Then, proceed to answer using your general knowledge.
-    4. PARTIAL DATA: If the textbooks cover the topic but miss a specific detail, say: 
-       "I checked your uploaded books, but they don't detail this specific point. Based on standard {subject} principles, it works like this..."
-    5. STAY ON TOPIC: Gently pull the student back if they drift away from "{topic}".
-    """
+Rules:
+- Explain one concept at a time
+- Be conversational
+- Use textbook context strictly
+- End with a question
+"""
 
-    messages: List[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}]
+    # ================== 💬 BUILD MESSAGES ==================
+    messages: List[ChatCompletionMessageParam] = [
+        {"role": "system", "content": system_prompt}
+    ]
 
     if history:
-        messages.extend(history)
+        messages.extend([
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in history
+            if "role" in msg and "content" in msg
+        ])
 
     user_msg = question if question.strip() else "I'm ready to start today's lesson!"
 
     user_payload = (
-        f"[SESSION CONTEXT]\n"
-        f"Subject: {subject} | Topic: {topic}\n"
-        f"Context from your 3 Textbooks:\n{context}\n\n"
-        f"Student says: {user_msg}"
+        f"[SESSION]\n"
+        f"Subject: {subject}\n"
+        f"Topic: {topic}\n\n"
+        f"Context:\n{context}\n\n"
+        f"Student: {user_msg}"
     )
 
-    messages.append({"role": "user", "content": user_payload})
+    messages.append({
+        "role": "user",
+        "content": user_payload
+    })
 
+    # ================== 🤖 GROQ CALL ==================
     try:
         response_stream = groq_client.chat.completions.create(
             messages=messages,
-            model="Llama-3.3-70b-versatile",
+            model="llama-3.3-70b-versatile",
             temperature=0.4,
-            stream=True ,
-            timeout=20.0
+            stream=True
         )
 
-        # [CHANGE 2]: Iterate and yield chunks
+        # 🔥 COLLECT STREAM INTO STRING
+        full_text = ""
+
         for chunk in response_stream:
             content = chunk.choices[0].delta.content
             if content:
-                yield content
+                full_text += content
+
+        return {
+            "answer": full_text.strip()
+        }
 
     except Exception as e:
         logger.error(f"[GROQ ERROR] {str(e)}")
-        yield f"Error: {str(e)}"
+        return {
+            "answer": f"AI Error: {str(e)}"
+        }
         
 import re
 import logging
