@@ -1,12 +1,16 @@
 import os
 from fastapi import Form, File, UploadFile
 import shutil
+from fastapi.responses import StreamingResponse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
 from db.database import get_db 
 from db import models
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 from services.rag_service import RAGService
 from fastapi.responses import StreamingResponse
 import logging
@@ -127,17 +131,19 @@ async def ask_teacher(
     request: TutorRequest, 
     db: Session = Depends(get_db)
 ):
-    clean_name = subject_name.strip().lower().replace(" ", "_")
-
+    # 1. Normalize for DB (Match the logic in your Subject table)
+    # Using ilike in the query is safer than manual normalization
     subj = db.query(models.Subject).filter(
         models.Subject.dept_id == dept.lower(),
         models.Subject.year == year,
-        models.Subject.name == clean_name
+        models.Subject.name.ilike(subject_name) 
     ).first()
 
     if not subj:
         raise HTTPException(status_code=404, detail="Subject not found")
 
+    # 2. Fetch or Create Session
+    # Note: request.topic should be dynamic based on your syllabus/day roadmap
     session = db.query(models.ChatSession).filter(
         models.ChatSession.user_id == request.user_id,
         models.ChatSession.subject_id == subj.id,
@@ -149,57 +155,43 @@ async def ask_teacher(
             user_id=request.user_id,
             subject_id=subj.id,
             day_number=day,
-            daily_topic=request.topic
+            daily_topic=request.topic, # Provided by frontend or roadmap logic
+            daily_task_json={"task": request.task, "topic": request.topic}
         )
         db.add(session)
         db.commit()
         db.refresh(session)
 
-    history_objs = db.query(models.Message).filter(
-        models.Message.session_id == session.id
-    ).order_by(models.Message.timestamp.desc()).limit(6).all()
-
-    chat_context = [{"role": m.role, "content": m.content} for m in reversed(history_objs)]
-
-    # 🔥 GET FULL RESPONSE
-    gen = RAGService.get_teacher_response(
-        question=request.message,
-        university=uni,
-        branch=dept,
-        year=year,
-        subject=clean_name,
-        daily_task={"day": day, "topic": request.topic, "task": request.task},
-        history=chat_context
+    # 3. Handle Streaming with the TeacherService logic
+    # We pass the db session so the method can handle the final save internally
+    
+    return StreamingResponse(
+        RAGService.get_teacher_response(
+            db=db,
+            user_id=request.user_id,
+            university=uni,
+            branch=dept,
+            year=year,
+            subject_name=getattr(subj, "name"),
+            day=day,
+            question=request.message
+        ),
+        media_type="text/event-stream"
     )
-
-    full_response = "".join([chunk for chunk in gen])
-
-    # 💾 SAVE
-    try:
-        user_content = request.message if request.message.strip() else f"Started: {request.topic}"
-
-        db.add(models.Message(
-            session_id=session.id,
-            role="user",
-            content=user_content
-        ))
-
-        db.add(models.Message(
-            session_id=session.id,
-            role="assistant",
-            content=full_response
-        ))
-
-        db.commit()
-
-    except Exception as e:
-        logger.error(f"Save error: {e}")
-
-    # ✅ RETURN CLEAN JSON
-    return {
-        "answer": full_response
-    }
    
+
+@router.get("/chat/history/{session_id}")
+async def get_older_messages(
+    session_id: int, 
+    skip: int = 0, 
+    limit: int = 3, 
+    db: Session = Depends(get_db)
+):
+    # Call the service method
+    messages = RAGService.get_chat_history(db, session_id, skip, limit)
+    return {"messages": messages}
+
+
 @router.get("/speak")
 async def speak(text: str, voice: str = "en-IN-NeerjaNeural"):
     """
