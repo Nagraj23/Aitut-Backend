@@ -23,82 +23,100 @@ from rest_framework import status
 
 
 class GenerateTestView(APIView):
+    """
+    Handles the generation of diagnostic tests (EASY, MEDIUM, HARD) 
+    for both Students and Individuals.
+    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        user_id = request.user.id
+        user = request.user
         domain = request.data.get("domain")
 
+        # 1. Validation
         if not domain:
-            return Response({"error": "Domain is required"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Domain is required (e.g., 'Python', 'Physics')"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        # 1. Determine which tier is next based on completed SWOTs
+        # 2. Extract User Role (Crucial for AI Persona)
+        # Fallback to 'STUDENT' if the field doesn't exist
+        user_role = getattr(user, 'role', 'STUDENT')
+
+        # 3. Progression Logic: Determine which tier to generate
+        # We check which tiers have already been analyzed in the SWOT table
         completed_tiers = AssessmentSWOT.objects.filter(
-            spring_user_id=user_id,
+            spring_user_id=user.id,
             assessment__domain=domain
         ).values_list('assessment__tier', flat=True)
 
         if "EASY" not in completed_tiers:
-            next_tier = AssessmentTier.EASY
+            next_tier = "EASY"
         elif "MEDIUM" not in completed_tiers:
-            next_tier = AssessmentTier.MEDIUM
+            next_tier = "MEDIUM"
         elif "HARD" not in completed_tiers:
-            next_tier = AssessmentTier.HARD
+            next_tier = "HARD"
         else:
+            # All onboarding phases finished for this domain
             return Response({
-                "message": "Onboarding tiers complete!", 
+                "message": f"Onboarding for {domain} is already complete!", 
                 "onboarding_finished": True
             }, status=status.HTTP_200_OK)
 
-        # 2. Try to fetch an existing, incomplete assessment for this tier
-        # This prevents re-generating questions if the user refreshes the page
+        # 4. Idempotency Check: Don't regenerate if an incomplete test exists
+        # This saves Groq API costs if the user refreshes the screen
         assessment = Assessment.objects.filter(
-            spring_user_id=user_id,
+            spring_user_id=user.id,
             domain=domain,
             tier=next_tier,
-            assessment_type=AssessmentType.ONBOARDING,
+            assessment_type="ONBOARDING",
             is_completed=False
         ).first()
 
-        # 3. If no incomplete assessment exists, generate a new one
+        # 5. Generate New Assessment if none exists
         if not assessment:
-            # Fetch loopholes from the absolute latest SWOT for adaptive questions
+            # Fetch 'loopholes' from the previous tier's SWOT to make the next tier adaptive
             previous_swot = AssessmentSWOT.objects.filter(
-                spring_user_id=user_id,
+                spring_user_id=user.id,
                 assessment__domain=domain
             ).order_by("-assessment__created_at").first()
             
-            loopholes = previous_swot.weaknesses if previous_swot else None
+            # If previous SWOT exists, pull its weaknesses
+            loopholes = previous_swot.weaknesses if previous_swot else []
 
-            # Generate the questions
+            # Call AI Logic (passing the role so AI knows the target audience)
             generated_questions = generate_assessment(
                 domain=domain, 
                 tier=next_tier, 
-                assessment_type=AssessmentType.ONBOARDING, 
+                role=user_role,
+                assessment_type="ONBOARDING", 
                 previous_loopholes=loopholes
             )
 
-            # Check if generation actually returned data to avoid IntegrityError
             if not generated_questions:
                 return Response({
-                    "error": "Failed to generate questions. Please check your AI service or domain constraints."
+                    "error": "AI failed to generate questions. Please try again."
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            # Create the record in the database
+            # Create the database record
             assessment = Assessment.objects.create(
-                spring_user_id=user_id,
+                spring_user_id=user.id,
                 domain=domain,
                 tier=next_tier,
-                assessment_type=AssessmentType.ONBOARDING,
+                assessment_type="ONBOARDING",
                 is_completed=False,
                 questions=generated_questions
             )
 
-        # 4. Return the assessment (either the existing one or the newly created one)
+        # 6. Return Response to Frontend (React Native)
         return Response({
-            "tier": assessment.tier,
+            "status": "success",
             "test_id": assessment.id,
-            "questions": assessment.questions
+            "domain": assessment.domain,
+            "tier": assessment.tier,
+            "role_context": user_role,
+            "questions": assessment.questions # This is the 10-question JSON list
         }, status=status.HTTP_200_OK)
 
 class SubmitAnswersView(APIView):

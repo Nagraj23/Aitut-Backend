@@ -43,61 +43,68 @@ def get_syllabus_from_chroma(subject_id, user_goal="Complete syllabus mastery", 
         print(f"Error: {e}")
         return None
     
-def generate_assessment(domain, tier, assessment_type="ONBOARDING", previous_loopholes=None, chat_context=None):
+import json
+
+def generate_assessment(domain, tier, role="STUDENT", assessment_type="ONBOARDING", previous_loopholes=None, chat_context=None):
     """
-    Tier-based Blitz (Easy/Med/Hard) for Onboarding 
-    OR Chat-context driven Weekly Reinforcement.
+    Universal Assessment Engine
+    - role: 'STUDENT' (Academic/Theory) or 'INDIVIDUAL' (Practical/Industry)
+    - tier: 'EASY', 'MEDIUM', 'HARD'
+    - assessment_type: 'ONBOARDING' (Diagnostic) or 'WEEKLY' (Reinforcement)
     """
     
-    tier_depth = {
-        "EASY": "Focus on core syntax, fundamental principles, and 'The Why' behind basic operations.",
-        "MEDIUM": "Focus on logic flow, data handling, error management, and architecture.",
-        "HARD": "Focus on performance optimization, security, edge cases, and complex system troubleshooting."
+    # 1. Role-Based Personas (Subject Agnostic)
+    personas = {
+        "STUDENT": "Academic Examiner. Focus on formal theory, fundamental laws, and conceptual accuracy.",
+        "INDIVIDUAL": "Industry Consultant. Focus on real-world application, efficiency, and practical troubleshooting."
     }
 
-    # Weekly Reinforcement Logic
+    # 2. Universal Depth Definitions (Applies to any subject)
+    tier_depth = {
+        "EASY": "Core terminology, fundamental principles, and basic 'How-to' concepts.",
+        "MEDIUM": "Process flow, relationship between variables, and standard problem-solving.",
+        "HARD": "Complex system troubleshooting, edge cases, and high-level evaluation/optimization."
+    }
+
+    # 3. Protocol Logic
     if assessment_type == "WEEKLY":
         context_prompt = f"""
         WEEKLY PROTOCOL:
-        1. CONCEPTS MASTERED IN RECENT SESSIONS: {chat_context if chat_context else 'General curriculum'}
-        2. RESIDUAL LOOPHOLES FROM PREVIOUS TESTS: {', '.join(previous_loopholes) if previous_loopholes else 'None'}
-        
-        INSTRUCTION: 
-        You are verifying the student's actual retention of this week's topics. 
-        - 7 questions must challenge the concepts they claimed to 'master' in chat sessions.
-        - 3 questions must revisit their previous loopholes to ensure they haven't relapsed.
+        - Mastery Check: 7 questions must challenge concepts recently discussed: {chat_context if chat_context else 'General curriculum'}.
+        - Gap Closure: 3 questions must revisit previous weaknesses/loopholes: {', '.join(previous_loopholes) if previous_loopholes else 'None'}.
         """
     else:
-        # Initial Blitz Logic
         context_prompt = f"""
         DIAGNOSTIC PROTOCOL:
-        - Goal: Establish a technical baseline for {domain}.
+        - Goal: Establish a baseline for {domain}.
         - Level: {tier} - {tier_depth.get(tier)}
-        - Ensure questions require logical reasoning rather than just memory recall.
         """
 
+    # 4. Final Prompt Construction
     prompt = f"""
-    You are a Senior Technical Lead and Educational Psychologist. 
-    Generate a 10-question {assessment_type} for an individual learning {domain}.
+    {personas.get(role, personas['STUDENT'])}
+    Generate a 10-question {assessment_type} for a {role} learning {domain}.
 
     {context_prompt}
 
     RULES:
     1. 6 MCQs: No 'all of the above' answers. Use scenario-based options.
-    2. 4 Descriptive: Use 'Scenario Troubleshooting' (e.g., 'Your app is doing X, how do you fix Y?') or 'ELI5' prompts.
-    3. Ensure a mix of coding logic and high-level conceptual understanding.
+    2. 4 Descriptive: Use 'Problem-Solving' or 'Conceptual Explanation' (ELI5) prompts.
+    3. Ensure questions test logical reasoning, not just memorization.
     4. Output ONLY valid JSON. No conversational filler.
 
     FORMAT:
     {{
       "tier": "{tier}",
       "type": "{assessment_type}",
+      "role": "{role}",
       "questions": [
-        {{ "id": 1, "type": "mcq", "question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], "answer": "A" }},
-        {{ "id": 7, "type": "descriptive", "question": "..." }}
+        {{ "id": 1, "type": "mcq", "question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], "answer": "A", "explanation": "..." }},
+        {{ "id": 7, "type": "descriptive", "question": "...", "key_points": ["point 1", "point 2"] }}
       ]
     }}
     """
+
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -110,11 +117,10 @@ def generate_assessment(domain, tier, assessment_type="ONBOARDING", previous_loo
             return None
             
         data = json.loads(content)
-        # Ensure we return the 'questions' list specifically
         return data.get("questions") 
         
     except Exception as e:
-        print(f"Groq Generation Error: {e}")
+        print(f"Generation Error: {e}")
         return None
     # ... (Client execution logic same as before)
 
