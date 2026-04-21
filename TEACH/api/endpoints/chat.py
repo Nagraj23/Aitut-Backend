@@ -3,6 +3,7 @@ from fastapi import Form, File, UploadFile
 import shutil
 from fastapi.responses import StreamingResponse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from db.models import ChatSession, Message, Subject
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
@@ -180,17 +181,28 @@ async def ask_teacher(
     )
    
 
-@router.get("/chat/history/{session_id}")
-async def get_older_messages(
-    session_id: int, 
-    skip: int = 0, 
-    limit: int = 3, 
-    db: Session = Depends(get_db)
-):
-    # Call the service method
-    messages = RAGService.get_chat_history(db, session_id, skip, limit)
-    return {"messages": messages}
+@router.get("/history/{user_id}/{subject_name}/{day}")
+async def get_session_history(user_id: str, subject_name: str, day: int, db: Session = Depends(get_db)):
+    
+    # 1. Use the Capitalized class name "Subject"
+    subj = db.query(Subject).filter(Subject.name.ilike(subject_name)).first()
+    
+    if not subj:
+        return {"messages": []}
 
+    # 2. Use "ChatSession" exactly as imported
+    session = db.query(ChatSession).filter(
+        ChatSession.user_id == user_id,
+        ChatSession.subject_id == subj.id,
+        ChatSession.day_number == day
+    ).first()
+
+    if not session:
+        return {"messages": []}
+
+    # 3. Use your RAGService to get formatted messages
+    messages = RAGService.get_chat_history(db, user_id, subject_name, day)
+    return {"messages": messages}
 
 @router.get("/speak")
 async def speak(text: str, voice: str = "en-IN-NeerjaNeural"):

@@ -9,6 +9,7 @@ from groq.types.chat import ChatCompletionMessageParam
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from groq.types.chat import ChatCompletionMessageParam
 from typing import Any, AsyncGenerator, List
+from starlette.concurrency import run_in_threadpool
 import json
 from sqlalchemy.orm import Session
 from db.models import ChatSession, Message, Subject
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2",local_files_only=True)
 # dg_client = DeepgramClient(settings.DEEPGRAM_API_KEY)
 VOICE = "en-IN-NeerjaNeural"
 
@@ -215,7 +216,8 @@ class RAGService:
     query_text = f"{topic} {question}" if question.strip() else topic
     context = ""
     try:
-        q_embedding = embedding_model.encode(query_text).tolist()
+        q_embedding = await run_in_threadpool(embedding_model.encode, query_text)
+        q_embedding = q_embedding.tolist()
         results = collection.query(
             query_embeddings=[q_embedding],
             n_results=3, # Lowered from 5 to 3 for token safety
@@ -224,7 +226,7 @@ class RAGService:
                     {"university": s_univ},
                     {"branch": s_branch},
                     {"subject": s_sub},
-                    {"doc_type": {"$in": ["notes", "syllabus"]}}
+                    {"doc_type": "notes"}
                 ]
             }
         )
@@ -305,27 +307,43 @@ KNOWLEDGE RULES:
         yield f"data: Error: {str(e)}\n\n"
         
  @staticmethod
- def get_chat_history(db: Session, session_id: int, skip: int = 0, limit: int = 3):
-    """
-    Fetches older messages for the UI.
-    skip: The number of messages already displayed on the phone.
-    limit: Number of older messages to fetch (default 3).
-    """
-    # Fetch messages ordered by newest first, then skip the ones already on screen
+ def get_chat_history(db: Session, user_id: str, subject_name: str, day: int, skip: int = 0, limit: int = 20):
+    # 1. First, find the subject to get the ID
+    subj = db.query(Subject).filter(
+        Subject.name.ilike(subject_name)
+    ).first()
+
+    if not subj:
+        return []
+
+    # 2. Find the Session
+    # Use 'ChatSession' directly
+    session = db.query(ChatSession).filter(
+        ChatSession.user_id == user_id,
+        ChatSession.subject_id == subj.id,
+        ChatSession.day_number == day
+    ).first()
+
+    if not session:
+        return []
+
+    # 3. Fetch messages using 'Message' directly
     past_messages = db.query(Message).filter(
-        Message.session_id == session_id
+        Message.session_id == session.id
     ).order_by(Message.timestamp.desc()).offset(skip).limit(limit).all()
     
-    # Format for Frontend (React Native)
-    return [
+    # 4. Format and REVERSE
+    formatted = [
         {
-            "id": str(msg.id), 
-            "role": str(msg.role), 
+            "id": f"msg_{msg.id}", 
+            "role": str(msg.role).lower(), 
             "text": str(msg.content),
             "timestamp": msg.timestamp.isoformat() if getattr(msg, 'timestamp', None) else None
         } 
         for msg in past_messages
     ]
+    
+    return formatted[::-1]
     
     
 import re
