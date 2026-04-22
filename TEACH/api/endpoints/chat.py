@@ -1,12 +1,17 @@
 import os
 from fastapi import Form, File, UploadFile
 import shutil
+from fastapi.responses import StreamingResponse
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from db.models import ChatSession, Message, Subject
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
 from db.database import get_db 
 from db import models
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
 from services.rag_service import RAGService
 from fastapi.responses import StreamingResponse
 import logging
@@ -127,17 +132,19 @@ async def ask_teacher(
     request: TutorRequest, 
     db: Session = Depends(get_db)
 ):
-    clean_name = subject_name.strip().lower().replace(" ", "_")
-
+    # 1. Normalize for DB (Match the logic in your Subject table)
+    # Using ilike in the query is safer than manual normalization
     subj = db.query(models.Subject).filter(
         models.Subject.dept_id == dept.lower(),
         models.Subject.year == year,
-        models.Subject.name == clean_name
+        models.Subject.name.ilike(subject_name) 
     ).first()
 
     if not subj:
         raise HTTPException(status_code=404, detail="Subject not found")
 
+    # 2. Fetch or Create Session
+    # Note: request.topic should be dynamic based on your syllabus/day roadmap
     session = db.query(models.ChatSession).filter(
         models.ChatSession.user_id == request.user_id,
         models.ChatSession.subject_id == subj.id,
@@ -149,57 +156,54 @@ async def ask_teacher(
             user_id=request.user_id,
             subject_id=subj.id,
             day_number=day,
-            daily_topic=request.topic
+            daily_topic=request.topic, # Provided by frontend or roadmap logic
+            daily_task_json={"task": request.task, "topic": request.topic}
         )
         db.add(session)
         db.commit()
         db.refresh(session)
 
-    history_objs = db.query(models.Message).filter(
-        models.Message.session_id == session.id
-    ).order_by(models.Message.timestamp.desc()).limit(6).all()
-
-    chat_context = [{"role": m.role, "content": m.content} for m in reversed(history_objs)]
-
-    # 🔥 GET FULL RESPONSE
-    gen = RAGService.get_teacher_response(
-        question=request.message,
-        university=uni,
-        branch=dept,
-        year=year,
-        subject=clean_name,
-        daily_task={"day": day, "topic": request.topic, "task": request.task},
-        history=chat_context
+    # 3. Handle Streaming with the TeacherService logic
+    # We pass the db session so the method can handle the final save internally
+    
+    return StreamingResponse(
+        RAGService.get_teacher_response(
+            db=db,
+            user_id=request.user_id,
+            university=uni,
+            branch=dept,
+            year=year,
+            subject_name=getattr(subj, "name"),
+            day=day,
+            question=request.message
+        ),
+        media_type="text/event-stream"
     )
-
-    full_response = "".join([chunk for chunk in gen])
-
-    # 💾 SAVE
-    try:
-        user_content = request.message if request.message.strip() else f"Started: {request.topic}"
-
-        db.add(models.Message(
-            session_id=session.id,
-            role="user",
-            content=user_content
-        ))
-
-        db.add(models.Message(
-            session_id=session.id,
-            role="assistant",
-            content=full_response
-        ))
-
-        db.commit()
-
-    except Exception as e:
-        logger.error(f"Save error: {e}")
-
-    # ✅ RETURN CLEAN JSON
-    return {
-        "answer": full_response
-    }
    
+
+@router.get("/history/{user_id}/{subject_name}/{day}")
+async def get_session_history(user_id: str, subject_name: str, day: int, db: Session = Depends(get_db)):
+    
+    # 1. Use the Capitalized class name "Subject"
+    subj = db.query(Subject).filter(Subject.name.ilike(subject_name)).first()
+    
+    if not subj:
+        return {"messages": []}
+
+    # 2. Use "ChatSession" exactly as imported
+    session = db.query(ChatSession).filter(
+        ChatSession.user_id == user_id,
+        ChatSession.subject_id == subj.id,
+        ChatSession.day_number == day
+    ).first()
+
+    if not session:
+        return {"messages": []}
+
+    # 3. Use your RAGService to get formatted messages
+    messages = RAGService.get_chat_history(db, user_id, subject_name, day)
+    return {"messages": messages}
+
 @router.get("/speak")
 async def speak(text: str, voice: str = "en-IN-NeerjaNeural"):
     """
@@ -220,44 +224,37 @@ async def speak(text: str, voice: str = "en-IN-NeerjaNeural"):
     return StreamingResponse(generate(), media_type="audio/mpeg")
 
 
-@router.post("/session/{session_id}/wrapup")
-async def wrapup_chat_session(session_id: str, db: Session = Depends(get_db)):
-    # 1. Fetch the Chat Session
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+@router.post("/session/wrapup_by_context/{user_id}/{subject_name}/{day}")
+async def wrapup_by_context(user_id: str, subject_name: str, day: int, db: Session = Depends(get_db)):
+    # 1. Find the subject
+    subj = db.query(models.Subject).filter(models.Subject.name.ilike(subject_name)).first()
+    if not subj:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    # 2. Find the specific session
+    session = db.query(ChatSession).filter(
+        ChatSession.user_id == user_id,
+        ChatSession.subject_id == subj.id,
+        ChatSession.day_number == day
+    ).first()
+
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="No active session found to wrap up")
 
-    # 2. Fetch all messages in this session to analyze
-    messages = db.query(Message).filter(Message.session_id == session_id).order_by(Message.timestamp.asc()).all()
+    # 3. Get history and generate recap
+    messages = db.query(Message).filter(Message.session_id == session.id).all()
+    history = [{"role": m.role, "content": m.content} for m in messages]
     
-    if not messages:
-        return {"message": "No conversation found to summarize."}
+    recap = RAGService.generate_daily_recap(history)
 
-    # 3. Format history for the AI
-    history_data = [
-        {"role": msg.role, "content": msg.content} 
-        for msg in messages
-    ]
+    # 4. Save
+    session.is_completed = True
+    session.mastered_topics = recap.get("mastered", [])
+    session.loopholes = recap.get("loopholes", [])
+    
+    db.commit()
 
-    try:
-        recap = RAGService.generate_daily_recap(history_data)
-        
-        setattr(session, 'is_completed', True)
-        setattr(session, 'mastered_topics', recap.get("mastered", []))
-        setattr(session, 'loopholes', recap.get("loopholes", []))
-        
-        db.commit()
-        db.refresh(session)
-        
-        logger.info(f"Session {session_id} wrapped up successfully.")
-        
-        return {
-            "status": "success",
-            "day": session.day_number,
-            "summary": recap
-        }
-
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error wrapping up session {session_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to generate daily recap")
+    return {
+        "status": "success",
+        "summary": recap
+    }

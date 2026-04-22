@@ -1,13 +1,25 @@
 import time
 import os
 from groq import Groq 
+import uuid
 import logging
 from langchain_community.document_loaders import PyPDFLoader
+from typing import List, cast
+from groq.types.chat import ChatCompletionMessageParam
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from groq.types.chat import ChatCompletionMessageParam
+from typing import Any, AsyncGenerator, List
+from starlette.concurrency import run_in_threadpool
+import json
+from sqlalchemy.orm import Session
+from db.models import ChatSession, Message, Subject
 from sentence_transformers import SentenceTransformer
 from core.config import get_settings
 from groq.types.chat import ChatCompletionMessageParam
 from db.chroma_db import get_collection
+from datetime import datetime
+from typing import Optional, List, Generator
+from sqlalchemy.orm import Session
 from typing import List, Optional
 import re
 from typing import AsyncGenerator
@@ -20,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2",local_files_only=True)
 # dg_client = DeepgramClient(settings.DEEPGRAM_API_KEY)
 VOICE = "en-IN-NeerjaNeural"
 
@@ -125,138 +137,215 @@ class RAGService:
             
     return "Failed: No content processed."
     
+    
  @staticmethod
- def get_teacher_response(
-    question: str, 
-    university: str, 
-    branch: str, 
-    year: int, 
-    subject: str, 
-    daily_task: dict,
-    history: Optional[List] = None
-):
-    topic = daily_task.get('topic', 'General Study')
-    task = daily_task.get('task', '')
-    query_text = f"{topic} {question}" if question.strip() else topic
+ async def get_teacher_response(
+    db: Session,
+    user_id: str,
+    university: str,
+    branch: str,
+    year: int,
+    subject_name: str,
+    day: int,
+    question: str
+) -> AsyncGenerator[str, None]:
+    
+    # 1. DYNAMICALLY FETCH SUBJECT
+    subject_record = db.query(Subject).filter(
+        Subject.name.ilike(subject_name),
+        Subject.year == year,
+        Subject.dept_id == branch.lower()
+    ).first()
 
-    collection_name = f"{university}_{branch}_{year}_{subject}".lower()
+    if not subject_record:
+        yield f"data: Error: Subject '{subject_name}' not found.\n\n"
+        return
+
+    topic = "General Study" 
+    task = "Reviewing concepts" 
+    
+    # 2. SESSION MANAGEMENT
+    session_record = db.query(ChatSession).filter(
+        ChatSession.user_id == user_id,
+        ChatSession.subject_id == subject_record.id,
+        ChatSession.day_number == day
+    ).first()
+
+    if not session_record:
+        session_record = ChatSession(
+            user_id=user_id,
+            subject_id=subject_record.id,
+            day_number=day,
+            daily_topic=topic,
+            daily_task_json={"day": day, "topic": topic, "task": task},
+            is_completed=False
+        )
+        db.add(session_record)
+        db.commit()
+        db.refresh(session_record)
+
+    # 3. RETRIEVE HISTORY (TOKEN OPTIMIZED: Last 5 messages)
+    history = []
+    past_messages = db.query(Message).filter(
+        Message.session_id == session_record.id
+    ).order_by(Message.timestamp.desc()).limit(10).all() # AI context limit
+
+    # Use ONE loop and define the variable inside it
+    for msg in reversed(past_messages):
+        # Define msg_data clearly
+        msg_data: Any = {
+            "role": "assistant" if str(msg.role).lower() == "assistant" else "user",
+            "content": str(msg.content)
+        }
+        # Append the variable you just created
+        history.append(msg_data)#type : ignore
+
+    # --- FIX FOR THE RED LINE ---
+    s_univ = str(university).lower()
+    s_branch = str(branch).lower()
+    s_year = str(year)
+    s_sub = str(subject_record.name).lower() 
+
+    if subject_record.vector_collection is not None:
+        collection_name = str(subject_record.vector_collection)
+    else:
+        collection_name = f"{s_univ}_{s_branch}_{s_year}_{s_sub}"
+    
+    # 4. VECTOR DB RETRIEVAL (TOKEN OPTIMIZED: 3 Results)
     collection = get_collection(collection_name)
-
-    logger.info(f"[QUERY] {query_text}")
-    logger.info(f"[COLLECTION] {collection_name}")
-
+    query_text = f"{topic} {question}" if question.strip() else topic
     context = ""
-
-    # ================== 🔍 VECTOR SEARCH ==================
     try:
-        q_embedding = embedding_model.encode(query_text).tolist()
-
+        q_embedding = await run_in_threadpool(embedding_model.encode, query_text)
+        q_embedding = q_embedding.tolist()
         results = collection.query(
             query_embeddings=[q_embedding],
-            n_results=15,
+            n_results=3, # Lowered from 5 to 3 for token safety
             where={
                 "$and": [
-                    {"university": university.lower()},
-                    {"branch": branch.lower()},
-                    {"subject": subject.lower()},
-                    {"doc_type": {"$in": ["notes", "syllabus"]}}
+                    {"university": s_univ},
+                    {"branch": s_branch},
+                    {"subject": s_sub},
+                    {"doc_type": "notes"}
                 ]
             }
         )
-
         raw_docs = (results.get("documents") or [[]])[0]
         raw_meta = (results.get("metadatas") or [[]])[0]
-
-        logger.info(f"[RESULT COUNT] {len(raw_docs)} chunks retrieved")
-
+        
         if not raw_docs:
             context = "NO_TEXTBOOK_DATA_FOUND"
         else:
-            context_parts = []
-
-            for i, doc in enumerate(raw_docs):
-                source = raw_meta[i].get("file_name", "Unknown Source")
-                page = raw_meta[i].get("page", "N/A")
-
-                logger.info(f"[SOURCE USED] File: {source} | Page: {page}")
-
-                context_parts.append(
-                    f"--- [SOURCE: {source} | PG: {page}] ---\n{doc}"
-                )
-
-            context = "\n\n".join(context_parts)
-
+            # Sliced each doc to 900 chars to prevent token overflow
+            context = "\n\n".join([f"--- [SOURCE: {m.get('file_name')}] ---\n{d[:900]}" 
+                                   for d, m in zip(raw_docs, raw_meta)])
     except Exception as e:
         logger.error(f"[DB ERROR] {str(e)}")
-        return {"answer": f"Database Error: {str(e)}"}
+        context = "NO_TEXTBOOK_DATA_FOUND"
 
-    # ================== 🧠 SYSTEM PROMPT ==================
+    # 5. MODIFIED COMPRESSED SYSTEM PROMPT (EXACT LOGIC)
     system_prompt = f"""
-You are the Lead Human AI Tutor.
+Role: Lead AI Tutor for Ai-Tut. Goal: Teach "{topic}" (Day {day}). Task: {task}.
 
-Teach "{topic}" (Day {daily_task.get('day')}).
+TUTOR PROTOCOL:
+- Start: If user says "hi"/"start", introduce Day {day} warmly.
+- Chunking: Explain ONE concept at a time.
+- Interact: Always end with a question or mini-quiz to check understanding.
+- Tone: Supportive, academic mentor. Professional, not a search engine.
 
-Rules:
-- Explain one concept at a time
-- Be conversational
-- Use textbook context strictly
-- End with a question
+UI & FORMATTING RULES (CRITICAL):
+- Paragraphs: Use EXACTLY two newlines (\\n\\n) between every paragraph.
+- Bolding: Use **BOLD** for every technical term, law, or key definition.
+- Lists: Use bullet points (-) for features, types, or steps.
+- Emojis: Start each response with a 🎓 or 💡 emoji and sprinkle relevant ones throughout.
+
+KNOWLEDGE RULES:
+- Merge: Compare/merge best analogies & definitions from textbook context.
+- Grounding: Context below is primary truth.
+- Missing Data: If context is 'NO_TEXTBOOK_DATA_FOUND', start response EXACTLY with:
+  "⚠️ **Note: This information is not in your uploaded textbooks. This response is auto-generated based on general {subject_name} principles.**"
+- Partial Data: If details are missing from books, say: "I checked your books, but they don't detail this. Based on general principles..."
+- Focus: Keep student on "{topic}".
 """
 
-    # ================== 💬 BUILD MESSAGES ==================
-    messages: List[ChatCompletionMessageParam] = [
-        {"role": "system", "content": system_prompt}
-    ]
+    # 6. CONSTRUCT MESSAGES
+    messages: List[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}]
+    messages.extend(history)
 
-    if history:
-        messages.extend([
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in history
-            if "role" in msg and "content" in msg
-        ])
-
-    user_msg = question if question.strip() else "I'm ready to start today's lesson!"
-
+    user_msg_content = question if question.strip() else "I'm ready to start today's lesson!"
+    
+    # Combined context and student query into one user block
     user_payload = (
-        f"[SESSION]\n"
-        f"Subject: {subject}\n"
-        f"Topic: {topic}\n\n"
-        f"Context:\n{context}\n\n"
-        f"Student: {user_msg}"
+        f"[CONTEXT FROM NOTES]\n{context}\n\n"
+        f"Student says: {user_msg_content}"
     )
+    messages.append({"role": "user", "content": user_payload})
 
-    messages.append({
-        "role": "user",
-        "content": user_payload
-    })
-
-    # ================== 🤖 GROQ CALL ==================
+    # 7. STREAMING AND PERSISTING
+    full_ai_response = ""
     try:
         response_stream = groq_client.chat.completions.create(
             messages=messages,
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             temperature=0.4,
             stream=True
         )
 
-        # 🔥 COLLECT STREAM INTO STRING
-        full_text = ""
-
         for chunk in response_stream:
-            content = chunk.choices[0].delta.content
-            if content:
-                full_text += content
+            token = chunk.choices[0].delta.content
+            if token:
+                full_ai_response += token
+                yield f"data: {token}\n\n"
 
-        return {
-            "answer": full_text.strip()
-        }
+        # 8. SAVE AFTER LOOP FINISHES
+        db.add(Message(session_id=session_record.id, role="user", content=user_msg_content))
+        db.add(Message(session_id=session_record.id, role="assistant", content=full_ai_response))
+        db.commit()
 
     except Exception as e:
         logger.error(f"[GROQ ERROR] {str(e)}")
-        return {
-            "answer": f"AI Error: {str(e)}"
-        }
+        yield f"data: Error: {str(e)}\n\n"
         
+ @staticmethod
+ def get_chat_history(db: Session, user_id: str, subject_name: str, day: int, skip: int = 0, limit: int = 20):
+    # 1. First, find the subject to get the ID
+    subj = db.query(Subject).filter(
+        Subject.name.ilike(subject_name)
+    ).first()
+
+    if not subj:
+        return []
+
+    # 2. Find the Session
+    # Use 'ChatSession' directly
+    session = db.query(ChatSession).filter(
+        ChatSession.user_id == user_id,
+        ChatSession.subject_id == subj.id,
+        ChatSession.day_number == day
+    ).first()
+
+    if not session:
+        return []
+
+    # 3. Fetch messages using 'Message' directly
+    past_messages = db.query(Message).filter(
+        Message.session_id == session.id
+    ).order_by(Message.timestamp.desc()).offset(skip).limit(limit).all()
+    
+    # 4. Format and REVERSE
+    formatted = [
+        {
+            "id": f"msg_{msg.id}", 
+            "role": str(msg.role).lower(), 
+            "text": str(msg.content),
+            "timestamp": msg.timestamp.isoformat() if getattr(msg, 'timestamp', None) else None
+        } 
+        for msg in past_messages
+    ]
+    
+    return formatted[::-1]
+    
+    
 import re
 import logging
 
