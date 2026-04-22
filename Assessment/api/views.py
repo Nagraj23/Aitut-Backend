@@ -23,33 +23,26 @@ from rest_framework import status
 
 
 class GenerateTestView(APIView):
-    """
-    Handles the generation of diagnostic tests (EASY, MEDIUM, HARD) 
-    for both Students and Individuals.
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         user = request.user
-        domain = request.data.get("domain")
+        raw_domain = request.data.get("domain")
 
-        # 1. Validation
-        if not domain:
-            return Response(
-                {"error": "Domain is required (e.g., 'Python', 'Physics')"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        if not raw_domain:
+            return Response({"error": "Domain is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 2. Extract User Role (Crucial for AI Persona)
-        # Fallback to 'STUDENT' if the field doesn't exist
+        # 1. Normalize for logic
+        domain = raw_domain.strip().title()
         user_role = getattr(user, 'role', 'STUDENT')
 
-        # 3. Progression Logic: Determine which tier to generate
-        # We check which tiers have already been analyzed in the SWOT table
-        completed_tiers = AssessmentSWOT.objects.filter(
+        # 2. Check Progression using case-insensitive filter
+        # We check Assessment table first because it's what the user sees
+        completed_tiers = Assessment.objects.filter(
             spring_user_id=user.id,
-            assessment__domain=domain
-        ).values_list('assessment__tier', flat=True)
+            domain__iexact=domain, # Case-insensitive
+            is_completed=True
+        ).values_list('tier', flat=True)
 
         if "EASY" not in completed_tiers:
             next_tier = "EASY"
@@ -58,34 +51,29 @@ class GenerateTestView(APIView):
         elif "HARD" not in completed_tiers:
             next_tier = "HARD"
         else:
-            # All onboarding phases finished for this domain
             return Response({
-                "message": f"Onboarding for {domain} is already complete!", 
+                "message": f"Onboarding for {domain} is complete!", 
                 "onboarding_finished": True
             }, status=status.HTTP_200_OK)
 
-        # 4. Idempotency Check: Don't regenerate if an incomplete test exists
-        # This saves Groq API costs if the user refreshes the screen
+        # 3. Idempotency Check (Case-insensitive)
         assessment = Assessment.objects.filter(
             spring_user_id=user.id,
-            domain=domain,
+            domain__iexact=domain,
             tier=next_tier,
-            assessment_type="ONBOARDING",
             is_completed=False
         ).first()
 
-        # 5. Generate New Assessment if none exists
+        # 4. Generate if none exists
         if not assessment:
-            # Fetch 'loopholes' from the previous tier's SWOT to make the next tier adaptive
+            # Get loopholes from the latest SWOT for this domain
             previous_swot = AssessmentSWOT.objects.filter(
                 spring_user_id=user.id,
-                assessment__domain=domain
+                assessment__domain__iexact=domain
             ).order_by("-assessment__created_at").first()
             
-            # If previous SWOT exists, pull its weaknesses
             loopholes = previous_swot.weaknesses if previous_swot else []
 
-            # Call AI Logic (passing the role so AI knows the target audience)
             generated_questions = generate_assessment(
                 domain=domain, 
                 tier=next_tier, 
@@ -95,28 +83,23 @@ class GenerateTestView(APIView):
             )
 
             if not generated_questions:
-                return Response({
-                    "error": "AI failed to generate questions. Please try again."
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                return Response({"error": "AI Error"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            # Create the database record
             assessment = Assessment.objects.create(
                 spring_user_id=user.id,
-                domain=domain,
+                domain=domain, # Saved as Normalized "React Native"
                 tier=next_tier,
                 assessment_type="ONBOARDING",
                 is_completed=False,
                 questions=generated_questions
             )
 
-        # 6. Return Response to Frontend (React Native)
         return Response({
             "status": "success",
             "test_id": assessment.id,
             "domain": assessment.domain,
             "tier": assessment.tier,
-            "role_context": user_role,
-            "questions": assessment.questions # This is the 10-question JSON list
+            "questions": assessment.questions 
         }, status=status.HTTP_200_OK)
 
 class SubmitAnswersView(APIView):
@@ -293,7 +276,7 @@ class GenerateRoadmapView(APIView):
                 role=role,
                 subject_id=formatted_subject_id,
                 phase_number=phase,
-                
+                domain=domain
                
             )
 

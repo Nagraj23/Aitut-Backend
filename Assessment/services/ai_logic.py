@@ -46,20 +46,14 @@ def get_syllabus_from_chroma(subject_id, user_goal="Complete syllabus mastery", 
 import json
 
 def generate_assessment(domain, tier, role="STUDENT", assessment_type="ONBOARDING", previous_loopholes=None, chat_context=None):
-    """
-    Universal Assessment Engine
-    - role: 'STUDENT' (Academic/Theory) or 'INDIVIDUAL' (Practical/Industry)
-    - tier: 'EASY', 'MEDIUM', 'HARD'
-    - assessment_type: 'ONBOARDING' (Diagnostic) or 'WEEKLY' (Reinforcement)
-    """
+    # 0. NORMALIZE INPUT (Crucial for DB consistency)
+    domain = domain.strip().title() # Transforms "react native" -> "React Native"
     
-    # 1. Role-Based Personas (Subject Agnostic)
     personas = {
         "STUDENT": "Academic Examiner. Focus on formal theory, fundamental laws, and conceptual accuracy.",
         "INDIVIDUAL": "Industry Consultant. Focus on real-world application, efficiency, and practical troubleshooting."
     }
 
-    # 2. Universal Depth Definitions (Applies to any subject)
     tier_depth = {
         "EASY": "Core terminology, fundamental principles, and basic 'How-to' concepts.",
         "MEDIUM": "Process flow, relationship between variables, and standard problem-solving.",
@@ -117,6 +111,7 @@ def generate_assessment(domain, tier, role="STUDENT", assessment_type="ONBOARDIN
             return None
             
         data = json.loads(content)
+        # Return both the questions AND the normalized domain to the view
         return data.get("questions") 
         
     except Exception as e:
@@ -173,139 +168,126 @@ def evaluate_answer(question, student_answer, domain):
     except Exception as e:
         raise ValueError(f"Evaluation failed: {str(e)}")
     
-def generate_deep_roadmap(user_id, role="student", subject_id=None, phase_number=1):
-    # Using Llama 3.3 70B for better reasoning and larger output limit
-    client = Groq(api_key=settings.GROQ_API_KEY)
+
+def generate_deep_roadmap(user_id, role="student", subject_id=None, phase_number=1, domain=None):
+    """
+    Unified Roadmap Engine:
+    1. Students -> Try Syllabus (RAG) -> Fallback to SWOT if missing.
+    2. Individuals -> Performance-based (SWOT) only.
+    """
+    role = role.lower()
     
-    if role == "student":
-        # goal is now a direct variable, not from user_preferences
-        target_unit_names = "Units 1, 2, and 3" if phase_number == 1 else "Units 4, 5, and 6"
+    # --- 1. CONTEXT GATHERING ---
+    syllabus_context = None
+    if role == "student" and subject_id:
+        syllabus_context = get_syllabus_from_chroma(subject_id)
+
+    # If we need performance data (Individual OR Student Fallback)
+    if not syllabus_context or role == "individual":
+        from db.models import UserKnowledgeGraph, AssessmentSWOT
         
-        # Fetching context
-        syllabus_context = get_syllabus_from_chroma(subject_id, )
-        
-        if not syllabus_context:
-            raise ValueError(f"Could not retrieve context for {subject_id}")
-
-        prompt = f"""
-        You are a Senior Academic Mentor. Generate a PURE JSON roadmap for PHASE {phase_number}.
-        
-        SYLLABUS DATA:
-        \"\"\"{syllabus_context}\"\"\"
-
-        --- PHASE CONFIGURATION ---
-        - CURRENT PHASE: Phase {phase_number}
-        - TARGET UNITS: {target_unit_names}
-        - TOTAL DURATION: Exactly 25 Days.
-
-        --- STRICT ALLOCATION RULES (DO NOT DEVIATE) ---
-        1. PURE LEARNING: For EACH of the 3 Units, allocate STRICTLY 6 days of "Learning" or "Problem Solving" (Mon-Fri + the following Mon).
-        2. NO COMPRESSION: Every sub-topic, derivation, and numerical mentioned in the SYLLABUS DATA must have its own dedicated day.
-        3. WEEKLY STRUCTURE:
-           - Days 1-5: Learning (Unit 1)
-           - Day 6: Weekly Assessment Test (Type: "Test")
-           - Day 7: Revision & Backlog Clear (Type: "Free")
-           - Day 8: Learning (Finish Unit 1)
-           - Days 9-12: Learning (Unit 2)... continue this pattern.
-        4. NANOTECHNOLOGY: {'If Phase 2, Unit 6 (Carbon Nanotubes/CNT) must span at least 6 detailed days.' if phase_number == 2 else ''}
-
-        --- OUTPUT FORMAT (JSON ONLY) ---
-        Return ONLY a JSON object. No conversational filler.
-        {{
-            "phase": {phase_number},
-            "title": "Phase {phase_number}: {'Foundations' if phase_number == 1 else 'Advanced Applications'}",
-            "daily_plan": [
-                {{ 
-                  "day": {'1' if phase_number == 1 else '31'}, 
-                  "topic": "Unit X: Specific Sub-topic", 
-                  "task": "Step-by-step learning objective including derivations", 
-                  "type": "Learning|Problem Solving|Test|Free" ,
-                  "is_completed": false  
-                }}
-            ]
-        }}
-        """
-
+        lookup_domain = domain if domain else subject_id
         try:
-            response = client.chat.completions.create(
-                messages=[{"role": "user", "content": prompt}],
-                model="llama-3.3-70b-versatile",
-                temperature=0.3,
-                response_format={"type": "json_object"}
+            graph = UserKnowledgeGraph.objects.get(
+                spring_user_id=user_id, 
+                domain__iexact=lookup_domain
+            )
+            swots = AssessmentSWOT.objects.filter(
+                spring_user_id=user_id, 
+                assessment__domain__iexact=lookup_domain
             )
             
-            content = response.choices[0].message.content
-            return json.loads(content) if content else None
+            all_loopholes = []
+            for s in swots:
+                if s.weaknesses:
+                    all_loopholes.extend(s.weaknesses)
+            
+            loopholes = list(set(all_loopholes))
+            mastery_data = graph.mastery_scores
+            error_type = graph.top_error_type
+        except Exception:
+            # Emergency fallback if no assessment data exists either
+            loopholes = ["Core fundamentals", "Industry standards"]
+            mastery_data = {}
+            error_type = "Conceptual"
 
-        except Exception as e:
-            print(f"❌ Error: {e}")
-            return None
-
-    else:
-        # PATH B: INDIVIDUAL (DIAGNOSTIC-BASED)
-        from db.models import UserKnowledgeGraph, AssessmentSWOT
-    
-        graph = UserKnowledgeGraph.objects.get(spring_user_id=user_id)
-        swots = AssessmentSWOT.objects.filter(spring_user_id=user_id)
-        all_loopholes = []
-        
-        for s in swots:
-            loopholes = getattr(s, 'critical_loopholes', [])
-            if loopholes:
-                all_loopholes.extend(loopholes)
-        
+    # --- 2. PROMPT CONSTRUCTION ---
+    if syllabus_context:
+        # PATH A: ACADEMIC (SYLLABUS-DRIVEN)
+        target_unit_names = "Units 1, 2, and 3" if phase_number == 1 else "Units 4, 5, and 6"
         prompt = f"""
-        You are a Senior Technical Architect. Create a deep learning roadmap based on a 7-day diagnostic.
+        You are a Senior Academic Mentor. Generate a PURE JSON roadmap for PHASE {phase_number}.
+        SOURCE: Official University Syllabus Data.
+
+        SYLLABUS CONTENT:
+        \"\"\"{syllabus_context}\"\"\"
+
+        --- CONFIGURATION ---
+        - TARGET: {target_unit_names}
+        - TOTAL DURATION: 25 Days.
+
+        --- RULES ---
+        1. STRUCTURE: Days 1-5: Learning | Day 6: Weekly Test | Day 7: Revision/Free.
+        2. ALLOCATION: Strictly 6 days per Unit. 
+        3. DETAIL: Every topic and derivation in the syllabus must be a specific task.
+        {'4. SPECIAL: Unit 6 (Carbon Nanotubes) must span at least 6 days.' if phase_number == 2 else ''}
+        """
+    else:
+        prompt = f"""
+        You are a Senior Technical Architect. Generate a STRICT 25-day roadmap based on performance gaps.
+        ROLE: {role.upper()}
+        DOMAIN: {domain or subject_id}
 
         STUDENT DATA:
-        - Domain: {graph.domain}
-        - Critical Loopholes: {all_loopholes}
-        - Mastered Concepts: {graph.mastery_scores}
-        - Primary Error Type: {graph.top_error_type}
-        
-       
-        - Duration: 25 days
+        - Critical Loopholes: {loopholes}
+        - Current Mastery Scores: {mastery_data}
+        - Error Pattern: {error_type}
 
-        RULES:
-        1. Phase 1 (Remediation): First 20% of time fixing "Critical Loopholes".
-        2. Phase 2 (Progression): Advance into unmastered topics.
-        3. Phase 3 (Application): Final project aligned with goal.
-        4. No conversational filler. OUTPUT ONLY VALID JSON.
-
-        OUTPUT FORMAT:
-        {{
-            "title": "Personalized {graph.domain} Path",
-            "overview": "...",
-            "phases": [
-                {{
-                    "name": "Phase Name",
-                    "days": "Day 1-10",
-                    "focus": "...",
-                    "daily_plan": [
-                        {{ "day": 1, "topic": "...", "task": "...", "depth": "Beginner|DeepDive","is_completed": false }}
-                    ]
-                }}
-            ],
-            "final_project_idea": "..."
-        }}
+        --- MANDATORY RULES ---
+        1. DURATION: Your 'daily_plan' array MUST contain exactly 25 objects (Day 1 to Day 25).
+        2. PHASE 1 (Remediation): Days 1-7 (Fixing Critical Loopholes).
+        3. PHASE 2 (Progression): Days 8-20 (Advanced concepts and unmastered concepts).
+        4. PHASE 3 (Application): Days 21-25 (Professional Capstone Project).
+        5. Every single day must have a unique 'task' and 'topic'.
         """
 
+    # Add shared Formatting Rules
+    prompt += f"""
+    --- OUTPUT FORMAT ---
+    Return ONLY valid JSON.
+    {{
+        "phase": {phase_number},
+        "title": "Roadmap Title",
+        "daily_plan": [
+            {{ 
+              "day": 1, 
+              "topic": "Specific Topic", 
+              "task": "Actionable task description", 
+              "type": "Learning|Test|Free",
+              "is_completed": false 
+            }}
+        ]
+    }}
+    """
+
+    # --- 3. EXECUTION ---
     try:
         response = client.chat.completions.create(
-            model=settings.CHAT_MODEL,
             messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+            temperature=0.3,
             response_format={"type": "json_object"}
         )
         
         content = response.choices[0].message.content
-        
-        if content is None:
+        if not content:
             raise ValueError("Groq returned empty content.")
 
         return json.loads(content)
         
     except Exception as e:
-        raise ValueError(f"Roadmap Generation Failed: {str(e)}")
+        print(f"Roadmap Generation Failed: {str(e)}")
+        return None
     
 def get_existing_roadmap_data(user_id):
     try:
