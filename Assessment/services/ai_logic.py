@@ -119,6 +119,26 @@ def generate_assessment(domain, tier, role="STUDENT", assessment_type="ONBOARDIN
         return None
     # ... (Client execution logic same as before)
 
+def normalize_list(items):
+    """
+    Converts AI + MCQ mixed outputs into clean string list.
+    Prevents dict/unhashable crashes.
+    """
+    clean = []
+
+    for i in items:
+        if not i:
+            continue
+
+        if isinstance(i, dict):
+            clean.append(
+                i.get("topic") or i.get("name") or i.get("value")
+            )
+        else:
+            clean.append(i)
+
+    return [str(x).strip() for x in clean if x]
+
 def evaluate_answer(question, student_answer, domain):
     """
     Dynamically evaluates answers based on the specific assessment domain.

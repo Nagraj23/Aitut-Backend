@@ -224,44 +224,37 @@ async def speak(text: str, voice: str = "en-IN-NeerjaNeural"):
     return StreamingResponse(generate(), media_type="audio/mpeg")
 
 
-@router.post("/session/{session_id}/wrapup")
-async def wrapup_chat_session(session_id: str, db: Session = Depends(get_db)):
-    # 1. Fetch the Chat Session
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+@router.post("/session/wrapup_by_context/{user_id}/{subject_name}/{day}")
+async def wrapup_by_context(user_id: str, subject_name: str, day: int, db: Session = Depends(get_db)):
+    # 1. Find the subject
+    subj = db.query(models.Subject).filter(models.Subject.name.ilike(subject_name)).first()
+    if not subj:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    # 2. Find the specific session
+    session = db.query(ChatSession).filter(
+        ChatSession.user_id == user_id,
+        ChatSession.subject_id == subj.id,
+        ChatSession.day_number == day
+    ).first()
+
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="No active session found to wrap up")
 
-    # 2. Fetch all messages in this session to analyze
-    messages = db.query(Message).filter(Message.session_id == session_id).order_by(Message.timestamp.asc()).all()
+    # 3. Get history and generate recap
+    messages = db.query(Message).filter(Message.session_id == session.id).all()
+    history = [{"role": m.role, "content": m.content} for m in messages]
     
-    if not messages:
-        return {"message": "No conversation found to summarize."}
+    recap = RAGService.generate_daily_recap(history)
 
-    # 3. Format history for the AI
-    history_data = [
-        {"role": msg.role, "content": msg.content} 
-        for msg in messages
-    ]
+    # 4. Save
+    session.is_completed = True
+    session.mastered_topics = recap.get("mastered", [])
+    session.loopholes = recap.get("loopholes", [])
+    
+    db.commit()
 
-    try:
-        recap = RAGService.generate_daily_recap(history_data)
-        
-        setattr(session, 'is_completed', True)
-        setattr(session, 'mastered_topics', recap.get("mastered", []))
-        setattr(session, 'loopholes', recap.get("loopholes", []))
-        
-        db.commit()
-        db.refresh(session)
-        
-        logger.info(f"Session {session_id} wrapped up successfully.")
-        
-        return {
-            "status": "success",
-            "day": session.day_number,
-            "summary": recap
-        }
-
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error wrapping up session {session_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to generate daily recap")
+    return {
+        "status": "success",
+        "summary": recap
+    }
