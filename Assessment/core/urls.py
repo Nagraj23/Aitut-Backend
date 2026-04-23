@@ -3,7 +3,9 @@ from api.views import (
     GenerateTestView, 
     SubmitAnswersView, 
     GetLatestRoadmapView,
-    GenerateRoadmapView # 👈 New View
+    GenerateRoadmapView ,# 👈 New View
+    UserProgressStatusView
+    
 )
 
 urlpatterns = [
@@ -14,4 +16,5 @@ urlpatterns = [
     # Day 8: Generate the deep roadmap
     path('api/roadmaps/latest/<str:user_id>/', GetLatestRoadmapView.as_view(), name='get_latest_roadmap'),
     path('api/roadmap/create/', GenerateRoadmapView.as_view(), name='create_roadmap'),
+     path('api/user-status/<str:spring_user_id>/', UserProgressStatusView.as_view(), name='user-status')
 ]

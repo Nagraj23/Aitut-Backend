@@ -132,54 +132,48 @@ async def ask_teacher(
     request: TutorRequest, 
     db: Session = Depends(get_db)
 ):
-    # 1. Normalize for DB (Match the logic in your Subject table)
-    # Using ilike in the query is safer than manual normalization
+    # 1. Try fetching subject (NO HARD FAIL)
     subj = db.query(models.Subject).filter(
         models.Subject.dept_id == dept.lower(),
         models.Subject.year == year,
-        models.Subject.name.ilike(subject_name) 
+        models.Subject.name.ilike(subject_name)
     ).first()
 
-    if not subj:
-        raise HTTPException(status_code=404, detail="Subject not found")
+    subject_id = subj.id if subj else None
+    safe_subject_name = subj.name if subj else subject_name  # fallback
 
-    # 2. Fetch or Create Session
-    # Note: request.topic should be dynamic based on your syllabus/day roadmap
+    # 2. Fetch or Create Session (NO SUBJECT DEPENDENCY)
     session = db.query(models.ChatSession).filter(
         models.ChatSession.user_id == request.user_id,
-        models.ChatSession.subject_id == subj.id,
         models.ChatSession.day_number == day
     ).first()
 
     if not session:
         session = models.ChatSession(
             user_id=request.user_id,
-            subject_id=subj.id,
+            subject_id=subject_id,  # can be None
             day_number=day,
-            daily_topic=request.topic, # Provided by frontend or roadmap logic
+            daily_topic=request.topic,
             daily_task_json={"task": request.task, "topic": request.topic}
         )
         db.add(session)
         db.commit()
         db.refresh(session)
-
-    # 3. Handle Streaming with the TeacherService logic
-    # We pass the db session so the method can handle the final save internally
-    
+    safe_subject_name = str(subj.name) if subj else str(subject_name)
+    # 3. Call RAG (it already handles fallback)
     return StreamingResponse(
-        RAGService.get_teacher_response(
-            db=db,
-            user_id=request.user_id,
-            university=uni,
-            branch=dept,
-            year=year,
-            subject_name=getattr(subj, "name"),
-            day=day,
-            question=request.message
-        ),
-        media_type="text/event-stream"
-    )
-   
+    RAGService.get_teacher_response(
+        db=db,
+        user_id=request.user_id,
+        university=uni,
+        branch=dept,
+        year=year,
+        subject_name=safe_subject_name,  # ✅ correct param
+        day=day,
+        question=request.message
+    ),
+    media_type="text/event-stream"
+)
 
 @router.get("/history/{user_id}/{subject_name}/{day}")
 async def get_session_history(user_id: str, subject_name: str, day: int, db: Session = Depends(get_db)):

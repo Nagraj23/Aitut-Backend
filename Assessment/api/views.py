@@ -414,3 +414,49 @@ class GetLatestRoadmapView(APIView):
             "exists": True,
             **roadmap_data
         }, status=status.HTTP_200_OK)
+        
+class UserProgressStatusView(APIView):
+    """
+    Checks the user's progress through the 3 phases:
+    1. Profile (Knowledge Graph)
+    2. Assessment (3 Tests)
+    3. Roadmap (Learning)
+    """
+    def get(self, request, spring_user_id):
+        try:
+            # 1. Check if Knowledge Graph (Profile) exists and is complete
+            # We check for university/domain as markers of a completed profile
+            kg = UserKnowledgeGraph.objects.filter(spring_user_id=spring_user_id).first()
+            profile_complete = False
+            if kg and kg.university and kg.domain:
+                profile_complete = True
+
+            # 2. Count completed assessments for this user
+            test_count = Assessment.objects.filter(
+                spring_user_id=spring_user_id, 
+                is_completed=True
+            ).count()
+
+            # 3. Check if a roadmap has already been generated
+            has_roadmap = Roadmap.objects.filter(spring_user_id=spring_user_id).exists()
+
+            # 4. Determine "is_ready_for_roadmap" logic
+            # This updates your model flag if 3 tests are done
+            is_ready = False
+            if profile_complete and test_count >= 3:
+                is_ready = True
+                if kg and not kg.is_ready_for_roadmap:
+                    kg.is_ready_for_roadmap = True
+                    kg.save()
+
+            return Response({
+                "spring_user_id": spring_user_id,
+                "profile_complete": profile_complete,
+                "test_count": test_count,
+                "is_ready_for_roadmap": is_ready,
+                "has_roadmap": has_roadmap,
+                "domain": kg.domain if kg else None
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

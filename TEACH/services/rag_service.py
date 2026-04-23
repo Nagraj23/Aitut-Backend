@@ -138,6 +138,7 @@ class RAGService:
     return "Failed: No content processed."
     
     
+
  @staticmethod
  async def get_teacher_response(
     db: Session,
@@ -149,32 +150,42 @@ class RAGService:
     day: int,
     question: str
 ) -> AsyncGenerator[str, None]:
-    
-    # 1. DYNAMICALLY FETCH SUBJECT
+
+    # -------------------------------
+    # 1. SUBJECT FETCH (WITH FALLBACK)
+    # -------------------------------
     subject_record = db.query(Subject).filter(
         Subject.name.ilike(subject_name),
         Subject.year == year,
         Subject.dept_id == branch.lower()
     ).first()
 
-    if not subject_record:
-        yield f"data: Error: Subject '{subject_name}' not found.\n\n"
-        return
+    topic = "General Study"
+    task = "Reviewing concepts"
 
-    topic = "General Study" 
-    task = "Reviewing concepts" 
-    
-    # 2. SESSION MANAGEMENT
+    if subject_record:
+        subject_id = subject_record.id
+        s_sub = str(subject_record.name).lower()
+    else:
+        subject_id = None
+        s_sub = subject_name.lower() if subject_name else "general"
+
+    s_univ = str(university).lower()
+    s_branch = str(branch).lower()
+    s_year = str(year)
+
+    # -------------------------------
+    # 2. SESSION MANAGEMENT (NO BREAK)
+    # -------------------------------
     session_record = db.query(ChatSession).filter(
         ChatSession.user_id == user_id,
-        ChatSession.subject_id == subject_record.id,
         ChatSession.day_number == day
     ).first()
 
     if not session_record:
         session_record = ChatSession(
             user_id=user_id,
-            subject_id=subject_record.id,
+            subject_id=subject_id,
             day_number=day,
             daily_topic=topic,
             daily_task_json={"day": day, "topic": topic, "task": task},
@@ -184,66 +195,71 @@ class RAGService:
         db.commit()
         db.refresh(session_record)
 
-    # 3. RETRIEVE HISTORY (TOKEN OPTIMIZED: Last 5 messages)
+    # -------------------------------
+    # 3. HISTORY
+    # -------------------------------
     history = []
     past_messages = db.query(Message).filter(
         Message.session_id == session_record.id
-    ).order_by(Message.timestamp.desc()).limit(10).all() # AI context limit
+    ).order_by(Message.timestamp.desc()).limit(10).all()
 
-    # Use ONE loop and define the variable inside it
     for msg in reversed(past_messages):
-        # Define msg_data clearly
         msg_data: Any = {
             "role": "assistant" if str(msg.role).lower() == "assistant" else "user",
             "content": str(msg.content)
         }
-        # Append the variable you just created
-        history.append(msg_data)#type : ignore
+        history.append(msg_data)
 
-    # --- FIX FOR THE RED LINE ---
-    s_univ = str(university).lower()
-    s_branch = str(branch).lower()
-    s_year = str(year)
-    s_sub = str(subject_record.name).lower() 
+    # -------------------------------
+    # 4. VECTOR DB (SAFE FALLBACK)
+    # -------------------------------
+    context = "NO_TEXTBOOK_DATA_FOUND"
 
-    if subject_record.vector_collection is not None:
-        collection_name = str(subject_record.vector_collection)
-    else:
-        collection_name = f"{s_univ}_{s_branch}_{s_year}_{s_sub}"
-    
-    # 4. VECTOR DB RETRIEVAL (TOKEN OPTIMIZED: 3 Results)
-    collection = get_collection(collection_name)
-    query_text = f"{topic} {question}" if question.strip() else topic
-    context = ""
-    try:
-        q_embedding = await run_in_threadpool(embedding_model.encode, query_text)
-        q_embedding = q_embedding.tolist()
-        results = collection.query(
-            query_embeddings=[q_embedding],
-            n_results=3, # Lowered from 5 to 3 for token safety
-            where={
-                "$and": [
-                    {"university": s_univ},
-                    {"branch": s_branch},
-                    {"subject": s_sub},
-                    {"doc_type": "notes"}
-                ]
-            }
-        )
-        raw_docs = (results.get("documents") or [[]])[0]
-        raw_meta = (results.get("metadatas") or [[]])[0]
-        
-        if not raw_docs:
+    if subject_record:
+        try:
+            if subject_record.vector_collection is not None:
+                collection_name = str(subject_record.vector_collection)
+            else:
+                collection_name = f"{s_univ}_{s_branch}_{s_year}_{s_sub}"
+
+            collection = get_collection(collection_name)
+
+            query_text = f"{topic} {question}" if question.strip() else topic
+
+            q_embedding = await run_in_threadpool(
+                embedding_model.encode, query_text
+            )
+            q_embedding = q_embedding.tolist()
+
+            results = collection.query(
+                query_embeddings=[q_embedding],
+                n_results=3,
+                where={
+                    "$and": [
+                        {"university": s_univ},
+                        {"branch": s_branch},
+                        {"subject": s_sub},
+                        {"doc_type": "notes"}
+                    ]
+                }
+            )
+
+            raw_docs = (results.get("documents") or [[]])[0]
+            raw_meta = (results.get("metadatas") or [[]])[0]
+
+            if raw_docs:
+                context = "\n\n".join([
+                    f"--- [SOURCE: {m.get('file_name')}] ---\n{d[:900]}"
+                    for d, m in zip(raw_docs, raw_meta)
+                ])
+
+        except Exception as e:
+            logger.error(f"[DB ERROR] {str(e)}")
             context = "NO_TEXTBOOK_DATA_FOUND"
-        else:
-            # Sliced each doc to 900 chars to prevent token overflow
-            context = "\n\n".join([f"--- [SOURCE: {m.get('file_name')}] ---\n{d[:900]}" 
-                                   for d, m in zip(raw_docs, raw_meta)])
-    except Exception as e:
-        logger.error(f"[DB ERROR] {str(e)}")
-        context = "NO_TEXTBOOK_DATA_FOUND"
 
-    # 5. MODIFIED COMPRESSED SYSTEM PROMPT (EXACT LOGIC)
+    # -------------------------------
+    # 5. SYSTEM PROMPT (UNCHANGED)
+    # -------------------------------
     system_prompt = f"""
 Role: Lead AI Tutor for Ai-Tut. Goal: Teach "{topic}" (Day {day}). Task: {task}.
 
@@ -268,21 +284,30 @@ KNOWLEDGE RULES:
 - Focus: Keep student on "{topic}".
 """
 
-    # 6. CONSTRUCT MESSAGES
-    messages: List[ChatCompletionMessageParam] = [{"role": "system", "content": system_prompt}]
-    messages.extend(history)
+    # -------------------------------
+    # 6. USER INPUT CONTROL (ONLY FIX)
+    # -------------------------------
+    no_data = (context == "NO_TEXTBOOK_DATA_FOUND")
 
-    user_msg_content = question if question.strip() else "I'm ready to start today's lesson!"
-    
-    # Combined context and student query into one user block
+    if no_data:
+        user_msg_content = f"I'm ready to start today's lesson on {topic}"
+    else:
+        user_msg_content = question if question.strip() else "I'm ready to start today's lesson!"
+
     user_payload = (
         f"[CONTEXT FROM NOTES]\n{context}\n\n"
         f"Student says: {user_msg_content}"
     )
+
+    messages: List = [{"role": "system", "content": system_prompt}]
+    messages.extend(history)
     messages.append({"role": "user", "content": user_payload})
 
-    # 7. STREAMING AND PERSISTING
+    # -------------------------------
+    # 7. STREAMING
+    # -------------------------------
     full_ai_response = ""
+
     try:
         response_stream = groq_client.chat.completions.create(
             messages=messages,
@@ -297,7 +322,6 @@ KNOWLEDGE RULES:
                 full_ai_response += token
                 yield f"data: {token}\n\n"
 
-        # 8. SAVE AFTER LOOP FINISHES
         db.add(Message(session_id=session_record.id, role="user", content=user_msg_content))
         db.add(Message(session_id=session_record.id, role="assistant", content=full_ai_response))
         db.commit()

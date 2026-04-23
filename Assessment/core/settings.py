@@ -67,8 +67,10 @@ DATABASES = {
         'PASSWORD': os.getenv('DB_PASSWORD'),
         'HOST': os.getenv('DB_HOST'),
         'PORT': os.getenv('DB_PORT'),
+        'CONN_MAX_AGE': 0,  # 🔥 Move it here (outside OPTIONS)
         'OPTIONS': {
-            'sslmode': 'require',  # 🔥 REQUIRED for Supabase
+            'sslmode': 'require', 
+            'connect_timeout': 10, # Good to keep for slow AI calls
         },
     }
 }
