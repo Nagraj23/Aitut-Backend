@@ -59,18 +59,18 @@ ROOT_URLCONF = 'core.urls'
 WSGI_APPLICATION = 'core.wsgi.application'
 
 # Database (PostgreSQL) [cite: 4]
+# Database (PostgreSQL)
+# settings.py
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME', 'postgres'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST'),
-        'PORT': os.getenv('DB_PORT'),
-        'CONN_MAX_AGE': 0,  # 🔥 Move it here (outside OPTIONS)
+        'NAME': 'Aitut',
+        'USER': 'postgres',
+        'PASSWORD': 'Nagraj@2005',
+        'HOST': '127.0.0.1',  # Use the IP instead of localhost
+        'PORT': '5432',
         'OPTIONS': {
-            'sslmode': 'require', 
-            'connect_timeout': 10, # Good to keep for slow AI calls
+            'sslmode': 'disable',
         },
     }
 }

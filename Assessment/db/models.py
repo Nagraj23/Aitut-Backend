@@ -17,27 +17,34 @@ class AssessmentType(models.TextChoices):
 
 class UserKnowledgeGraph(models.Model):
     """
-    The Master Profile: Stores the current state of a user's brain for a domain.
-    Updated after every assessment.
+    The Master Profile: Stores the state of a user's brain and progress.
     """
-    spring_user_id = models.CharField(max_length=255)
-    domain = models.CharField(max_length=100)
+    spring_user_id = models.CharField(max_length=255, db_index=True)
+    domain = models.CharField(max_length=100, null=True, blank=True)
     university = models.CharField(max_length=255, null=True, blank=True)
     
-    # Progress Tracking
+    # --- Progress Tracking Fields ---
+    # Total tests finished across this domain
+    test_count = models.IntegerField(default=0) 
+    # Whether the 50-day plan is generated
+    has_roadmap = models.BooleanField(default=False)
+    # Becomes true once Uni and Domain are set
     is_onboarding_complete = models.BooleanField(default=False) 
+    # Becomes true once test_count >= 3
     is_ready_for_roadmap = models.BooleanField(default=False)
     
-    # Master Data
-    mastery_scores = models.JSONField(default=dict)      # e.g., {"React": 85, "Hooks": 40}
-    critical_loopholes = models.JSONField(default=list)  # List of topics needing urgent fix
-    top_error_type = models.CharField(max_length=50, null=True, blank=True) # e.g., "Logic"
+    # Master AI Data
+    mastery_scores = models.JSONField(default=dict)      # {"React": 85, "Hooks": 40}
+    critical_loopholes = models.JSONField(default=list)  # ["State Management", "Redux"]
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = (('spring_user_id', 'domain'),)
+
+    def __str__(self):
+        return f"KG for {self.spring_user_id} - {self.domain}"
 
 class Assessment(models.Model):
     """

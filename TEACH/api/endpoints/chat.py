@@ -145,7 +145,8 @@ async def ask_teacher(
     # 2. Fetch or Create Session (NO SUBJECT DEPENDENCY)
     session = db.query(models.ChatSession).filter(
         models.ChatSession.user_id == request.user_id,
-        models.ChatSession.day_number == day
+        models.ChatSession.day_number == day,
+        models.ChatSession.subject_id == subject_id
     ).first()
 
     if not session:
@@ -167,6 +168,8 @@ async def ask_teacher(
         user_id=request.user_id,
         university=uni,
         branch=dept,
+        topic=request.topic,  # 👈 ADD THIS
+        task=request.task,
         year=year,
         subject_name=safe_subject_name,  # ✅ correct param
         day=day,

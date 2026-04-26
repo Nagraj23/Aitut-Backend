@@ -5,8 +5,16 @@ from db.models import UserKnowledgeGraph,Roadmap,RoadmapTask
 # from .config import get_settings
 from django.conf import settings
 # from core.settings import get_setting
+from django.db import transaction
 import chromadb
 from django.conf import settings
+from db.models import (
+    UserKnowledgeGraph, 
+    Assessment, 
+    AssessmentSWOT, 
+    Roadmap, 
+    RoadmapTask
+)
 from chromadb.api.types import Where
 import os 
 from .chroma_service import get_collection
@@ -45,7 +53,8 @@ def get_syllabus_from_chroma(subject_id, user_goal="Complete syllabus mastery", 
     
 import json
 
-def generate_assessment(domain, tier, role="STUDENT", assessment_type="ONBOARDING", previous_loopholes=None, chat_context=None):
+# 🔥 FIX 1: Added user_id to the function arguments
+def generate_assessment(user_id, domain, tier, role="STUDENT", assessment_type="ONBOARDING", previous_loopholes=None, chat_context=None):
     # 0. NORMALIZE INPUT (Crucial for DB consistency)
     domain = domain.strip().title() # Transforms "react native" -> "React Native"
     
@@ -111,13 +120,36 @@ def generate_assessment(domain, tier, role="STUDENT", assessment_type="ONBOARDIN
             return None
             
         data = json.loads(content)
-        # Return both the questions AND the normalized domain to the view
-        return data.get("questions") 
+        # 🔥 FIX 2: Define the variable clearly
+        questions_data = data.get("questions") 
+    
+        with transaction.atomic():
+            # 1. Store the assessment session
+            # Note: Using 'questions_data' to match what we got from the AI
+            Assessment.objects.create(
+                spring_user_id=user_id,
+                domain=domain,
+                tier=tier,
+                assessment_type=assessment_type,
+                questions=questions_data 
+            )
+
+            # 2. Update/Create the Knowledge Graph
+            UserKnowledgeGraph.objects.get_or_create(
+                spring_user_id=user_id,
+                domain=domain,
+                defaults={
+                    'university': 'BMIT', 
+                    'mastery_scores': {},
+                    'critical_loopholes': []
+                }
+            )
+            
+        return questions_data
         
     except Exception as e:
         print(f"Generation Error: {e}")
         return None
-    # ... (Client execution logic same as before)
 
 def normalize_list(items):
     """
@@ -139,9 +171,10 @@ def normalize_list(items):
 
     return [str(x).strip() for x in clean if x]
 
-def evaluate_answer(question, student_answer, domain):
+# 🔥 FIX: Added user_id and assessment_id to the arguments
+def evaluate_answer(user_id, assessment_id, question, student_answer, domain):
     """
-    Dynamically evaluates answers based on the specific assessment domain.
+    Dynamically evaluates answers and STORES the SWOT and Knowledge Graph data.
     """
     
     prompt = f"""
@@ -153,24 +186,25 @@ def evaluate_answer(question, student_answer, domain):
     Student Answer: {student_answer}
 
     EVALUATION CRITERIA:
-    1. DEPTH: Does the user mention internal mechanics, advanced patterns, or performance trade-offs relevant to {domain}?
+    1. DEPTH: Does the user mention internal mechanics, advanced patterns, or performance trade-offs?
     2. PRECISION: Are they using exact industry terminology?
-    3. CRITICAL GAPS: What key technical nuances did they NOT mention that a lead developer in {domain} should know?
+    3. CRITICAL GAPS: What key technical nuances did they NOT mention?
 
     Return ONLY JSON:
     {{
       "level": "Strong" | "Intermediate" | "Weak",
       "depth_rating": 1-10,
+      "score": 0-100,
       "error_type": "Conceptual" | "Logic" | "Syntax" | "None",
       "mastered_topics": [], 
       "critical_gaps": [],    
-      "root_cause": "Technical explanation of the rating level",
+      "root_cause": "Technical explanation",
       "roadmap_directives": {{
-          "immediate_fixes": ["Concept for Day 1-10"],
-          "advanced_mastery": ["Concept for Day 20-40"],
-          "project_challenge": "A mini-project idea to prove mastery"
+          "immediate_fixes": [],
+          "advanced_mastery": [],
+          "project_challenge": "..."
       }},
-      "feedback": "Direct, professional feedback on what is missing for 'Senior' level mastery."
+      "feedback": "Direct, professional feedback."
     }}"""
     
     try:
@@ -180,12 +214,42 @@ def evaluate_answer(question, student_answer, domain):
             response_format={"type": "json_object"}
         )
         
-        content = response.choices[0].message.content
-        if not content:
+        content_str = response.choices[0].message.content
+        if not content_str:
             raise ValueError("The AI returned an empty response.")
         
-        return json.loads(content)
+        evaluation_data = json.loads(content_str)
+
+        # 🔥 DATABASE PERSISTENCE
+        with transaction.atomic():
+            # 1. Fetch the actual Assessment record
+            assessment_obj = Assessment.objects.get(id=assessment_id)
+
+            # 2. Create the SWOT record (Matches your models.py fields)
+            AssessmentSWOT.objects.create(
+                assessment=assessment_obj,
+                spring_user_id=user_id,
+                score=evaluation_data.get('score', 0),
+                strengths=evaluation_data.get('mastered_topics', []),
+                weaknesses=evaluation_data.get('critical_gaps', []),
+                depth_score=evaluation_data.get('depth_rating', 5),
+                roadmap_directives=evaluation_data.get('roadmap_directives', {}),
+                suggested_focus=evaluation_data.get('feedback', '')
+            )
+
+            # 3. Update the Knowledge Graph with the latest results
+            UserKnowledgeGraph.objects.filter(
+                spring_user_id=user_id, 
+                domain__iexact=domain
+            ).update(
+                mastery_scores=evaluation_data.get('mastered_topics', {}),
+                critical_loopholes=evaluation_data.get('critical_gaps', [])
+            )
+
+        return evaluation_data
+        
     except Exception as e:
+        print(f"Evaluation Save Error: {e}")
         raise ValueError(f"Evaluation failed: {str(e)}")
     
 
@@ -201,12 +265,20 @@ def generate_deep_roadmap(user_id, role="student", subject_id=None, phase_number
     syllabus_context = None
     if role == "student" and subject_id:
         syllabus_context = get_syllabus_from_chroma(subject_id)
+        # Handle cases where Chroma returns a string saying no syllabus found
+        if syllabus_context == "No syllabus found.":
+            syllabus_context = None
+
+    # NEW: Create a clean domain name for SQL lookups to avoid naming mismatches
+    # e.g., "bmit_cse_4_reactnative" -> "Reactnative"
+    clean_domain = domain if domain else str(subject_id).split('_')[-1].title()
 
     # If we need performance data (Individual OR Student Fallback)
     if not syllabus_context or role == "individual":
         from db.models import UserKnowledgeGraph, AssessmentSWOT
         
-        lookup_domain = domain if domain else subject_id
+        # Use clean_domain for DB queries to ensure we find the SWOT/KnowledgeGraph records
+        lookup_domain = clean_domain
         try:
             graph = UserKnowledgeGraph.objects.get(
                 spring_user_id=user_id, 
@@ -220,16 +292,25 @@ def generate_deep_roadmap(user_id, role="student", subject_id=None, phase_number
             all_loopholes = []
             for s in swots:
                 if s.weaknesses:
-                    all_loopholes.extend(s.weaknesses)
+                    # Handle both list and string types for weaknesses
+                    if isinstance(s.weaknesses, list):
+                        all_loopholes.extend(s.weaknesses)
+                    else:
+                        all_loopholes.append(str(s.weaknesses))
             
-            loopholes = list(set(all_loopholes))
+            loopholes = list(set(all_loopholes)) if all_loopholes else ["Core fundamentals"]
             mastery_data = graph.mastery_scores
-            error_type = graph.top_error_type
-        except Exception:
+            error_type = getattr(graph, 'top_error_type', 'Conceptual')
+        except Exception as e:
+            print(f"Fallback context lookup failed: {e}")
             # Emergency fallback if no assessment data exists either
             loopholes = ["Core fundamentals", "Industry standards"]
             mastery_data = {}
             error_type = "Conceptual"
+            lookup_domain = clean_domain # Ensure lookup_domain is defined
+    else:
+        # If syllabus exists, we use the original subject_id for the database record
+        lookup_domain = subject_id
 
     # --- 2. PROMPT CONSTRUCTION ---
     if syllabus_context:
@@ -253,10 +334,11 @@ def generate_deep_roadmap(user_id, role="student", subject_id=None, phase_number
         {'4. SPECIAL: Unit 6 (Carbon Nanotubes) must span at least 6 days.' if phase_number == 2 else ''}
         """
     else:
+        # PATH B: PERFORMANCE-BASED (The updated Fallback)
         prompt = f"""
         You are a Senior Technical Architect. Generate a STRICT 25-day roadmap based on performance gaps.
         ROLE: {role.upper()}
-        DOMAIN: {domain or subject_id}
+        DOMAIN: {clean_domain}
 
         STUDENT DATA:
         - Critical Loopholes: {loopholes}
@@ -266,7 +348,7 @@ def generate_deep_roadmap(user_id, role="student", subject_id=None, phase_number
         --- MANDATORY RULES ---
         1. DURATION: Your 'daily_plan' array MUST contain exactly 25 objects (Day 1 to Day 25).
         2. PHASE 1 (Remediation): Days 1-7 (Fixing Critical Loopholes).
-        3. PHASE 2 (Progression): Days 8-20 (Advanced concepts and unmastered concepts).
+        3. PHASE 2 (Progression): Days 8-20 (Advanced concepts and industry-standard patterns).
         4. PHASE 3 (Application): Days 21-25 (Professional Capstone Project).
         5. Every single day must have a unique 'task' and 'topic'.
         """
@@ -303,7 +385,32 @@ def generate_deep_roadmap(user_id, role="student", subject_id=None, phase_number
         if not content:
             raise ValueError("Groq returned empty content.")
 
-        return json.loads(content)
+        roadmap_json = json.loads(content)
+
+        with transaction.atomic():
+            new_roadmap = Roadmap.objects.create(
+                spring_user_id=user_id,
+                subject=lookup_domain,
+                title=roadmap_json.get('title', f"Mastery: {lookup_domain}"),
+                overview="Personalized learning path based on assessment gaps.",
+                full_data=roadmap_json
+            )
+
+            tasks = [
+                RoadmapTask(
+                    roadmap=new_roadmap,
+                    day_number=d['day'],
+                    topic=d['topic'],
+                    task_description=d['task'],
+                    phase_name=d.get('type', 'Learning'),
+                    depth=d.get('depth', 'Intermediate')
+                ) for d in roadmap_json.get('daily_plan', [])
+            ]
+            RoadmapTask.objects.bulk_create(tasks)
+            
+            UserKnowledgeGraph.objects.filter(spring_user_id=user_id, domain=lookup_domain).update(has_roadmap=True)
+            
+        return roadmap_json # Return the JSON so the view can send it to the mobile app
         
     except Exception as e:
         print(f"Roadmap Generation Failed: {str(e)}")

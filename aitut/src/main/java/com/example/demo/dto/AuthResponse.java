@@ -16,4 +16,10 @@ public class AuthResponse {
     private String name;
     private String role;
     private boolean isComplete;
+    private String university;
+    private String department;
+    private int year;
+    private int testCount;
+    private boolean hasRoadmap;
+    private String currentLearning;
 }

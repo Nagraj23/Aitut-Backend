@@ -51,10 +51,12 @@ public class Users implements UserDetails {
     private UUID invitedBy;
     private int year;
     private String specialization;
-    private String targetCourse;
+    
     private String courseDuration;
     private Integer DailyStudyHours;
 
+    private String currentLearning; // e.g., "Java Full Stack"
+  
     
 
     @Enumerated(EnumType.STRING)

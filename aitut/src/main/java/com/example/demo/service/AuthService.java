@@ -293,7 +293,7 @@ public class AuthService {
         Users user = repo.findById(userId).orElseThrow();
 
         // Learning info
-        user.setTargetCourse(dto.getTargetCourse());
+        user.setCurrentLearning(dto.getCurrentLearning());
         user.setCourseDuration(dto.getCourseDuration());
         user.setDailyStudyHours(dto.getDailyStudyHours());
 
@@ -316,7 +316,7 @@ public class AuthService {
                              user.getPhoneNo() != null && !user.getPhoneNo().isBlank();
 
         // 2. Mandatory Learning Info
-        boolean hasLearningInfo = user.getTargetCourse() != null && !user.getTargetCourse().isBlank() &&
+        boolean hasLearningInfo = user.getCurrentLearning() != null && !user.getCurrentLearning().isBlank() &&
                                  user.getCourseDuration() != null && !user.getCourseDuration().isBlank() &&
                                  user.getDailyStudyHours() != null && user.getDailyStudyHours() > 0;
 
@@ -383,7 +383,11 @@ public class AuthService {
             .id(user.getId().toString())
             .name(user.getName())
             .role(user.getRole().toString())
-            .isComplete(user.isComplete()) // <--- Don't forget this!
+            .currentLearning(user.getCurrentLearning())
+            .isComplete(user.isComplete()) 
+            .university(user.getUniversity())
+            .year(user.getYear())
+            .department(user.getDepartment())
             .build();
 }
 
@@ -451,8 +455,7 @@ public class AuthService {
                         .university(bulkRequest.getUniversity())
                         .department(bulkRequest.getDepartment())
                         .courseDuration(bulkRequest.getCourseDuration())
-                        // .targetCourse(bulkRequest.getTargetCourse())
-                        // Metadata
+                        
                         .invitedBy(tpo.getId())
                         .role(Users.Role.STUDENT)
                         .verified(true)        // <--- Verified immediately!

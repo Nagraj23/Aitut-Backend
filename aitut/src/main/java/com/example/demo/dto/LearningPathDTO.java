@@ -17,7 +17,7 @@ public class LearningPathDTO {
     private String department;
 
     @NotBlank(message = "Target course is required")
-    private String targetCourse;
+    private String currentLearning;
 
     @NotBlank(message = "Course duration is required")
     private String courseDuration;

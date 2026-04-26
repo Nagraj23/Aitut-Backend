@@ -146,9 +146,11 @@ class RAGService:
     university: str,
     branch: str,
     year: int,
-    subject_name: str,
-    day: int,
-    question: str
+    subject_name: str, # From URL
+    day: int,          # From URL
+    topic: str,        # From UI Data
+    task: str,         # From UI Data
+    question: str      # From UI Data
 ) -> AsyncGenerator[str, None]:
 
     # -------------------------------
@@ -159,9 +161,6 @@ class RAGService:
         Subject.year == year,
         Subject.dept_id == branch.lower()
     ).first()
-
-    topic = "General Study"
-    task = "Reviewing concepts"
 
     if subject_record:
         subject_id = subject_record.id
@@ -175,11 +174,12 @@ class RAGService:
     s_year = str(year)
 
     # -------------------------------
-    # 2. SESSION MANAGEMENT (NO BREAK)
+    # 2. SESSION MANAGEMENT
     # -------------------------------
     session_record = db.query(ChatSession).filter(
         ChatSession.user_id == user_id,
-        ChatSession.day_number == day
+        ChatSession.day_number == day,
+        ChatSession.subject_id == subject_id
     ).first()
 
     if not session_record:
@@ -204,40 +204,29 @@ class RAGService:
     ).order_by(Message.timestamp.desc()).limit(10).all()
 
     for msg in reversed(past_messages):
-        msg_data: Any = {
+        history.append({
             "role": "assistant" if str(msg.role).lower() == "assistant" else "user",
             "content": str(msg.content)
-        }
-        history.append(msg_data)
+        })
 
     # -------------------------------
-    # 4. VECTOR DB (SAFE FALLBACK)
+    # 4. RAG CONTEXT FETCH
     # -------------------------------
     context = "NO_TEXTBOOK_DATA_FOUND"
-
     if subject_record:
         try:
-            if subject_record.vector_collection is not None:
-                collection_name = str(subject_record.vector_collection)
-            else:
-                collection_name = f"{s_univ}_{s_branch}_{s_year}_{s_sub}"
-
+           if subject_record.vector_collection is not None:
+            collection_name = str(subject_record.vector_collection)
             collection = get_collection(collection_name)
-
+            
             query_text = f"{topic} {question}" if question.strip() else topic
-
-            q_embedding = await run_in_threadpool(
-                embedding_model.encode, query_text
-            )
-            q_embedding = q_embedding.tolist()
-
+            q_embedding = await run_in_threadpool(embedding_model.encode, query_text)
+            
             results = collection.query(
-                query_embeddings=[q_embedding],
+                query_embeddings=[q_embedding.tolist()],
                 n_results=3,
                 where={
                     "$and": [
-                        {"university": s_univ},
-                        {"branch": s_branch},
                         {"subject": s_sub},
                         {"doc_type": "notes"}
                     ]
@@ -252,13 +241,11 @@ class RAGService:
                     f"--- [SOURCE: {m.get('file_name')}] ---\n{d[:900]}"
                     for d, m in zip(raw_docs, raw_meta)
                 ])
-
         except Exception as e:
-            logger.error(f"[DB ERROR] {str(e)}")
-            context = "NO_TEXTBOOK_DATA_FOUND"
+            logger.error(f"[RAG ERROR] {str(e)}")
 
     # -------------------------------
-    # 5. SYSTEM PROMPT (UNCHANGED)
+    # 5. SYSTEM PROMPT (STRICTLY UNCHANGED)
     # -------------------------------
     system_prompt = f"""
 Role: Lead AI Tutor for Ai-Tut. Goal: Teach "{topic}" (Day {day}). Task: {task}.
@@ -285,50 +272,73 @@ KNOWLEDGE RULES:
 """
 
     # -------------------------------
-    # 6. USER INPUT CONTROL (ONLY FIX)
+    # 6. USER INPUT CONTROL (FIXED)
     # -------------------------------
-    no_data = (context == "NO_TEXTBOOK_DATA_FOUND")
-
-    if no_data:
-        user_msg_content = f"I'm ready to start today's lesson on {topic}"
+    # Ensure the AI always sees the actual question or topic focus
+    if question and question.strip():
+        user_msg_content = question
     else:
-        user_msg_content = question if question.strip() else "I'm ready to start today's lesson!"
+        user_msg_content = f"I'm ready to start today's lesson on {topic}."
 
     user_payload = (
         f"[CONTEXT FROM NOTES]\n{context}\n\n"
         f"Student says: {user_msg_content}"
     )
 
-    messages: List = [{"role": "system", "content": system_prompt}]
+    messages: List[Any] = [{"role": "system", "content": system_prompt}]
     messages.extend(history)
     messages.append({"role": "user", "content": user_payload})
 
-    # -------------------------------
-    # 7. STREAMING
-    # -------------------------------
     full_ai_response = ""
+
+    def clean_text(text: str) -> str:
+     import re
+     text = re.sub(r'\s+([.,!?])', r'\1', text)   # fix space before punctuation
+     text = re.sub(r'\(\s+', '(', text)
+     text = re.sub(r'\s+\)', ')', text)
+     text = re.sub(r'\s{2,}', ' ', text)          # remove extra spaces
+     return text
 
     try:
         response_stream = groq_client.chat.completions.create(
-            messages=messages,
-            model="llama-3.1-8b-instant",
-            temperature=0.4,
-            stream=True
-        )
+        messages=messages,
+        model="llama-3.1-8b-instant",
+        temperature=0.4,
+        stream=True
+    )
+
+        buffer = ""
 
         for chunk in response_stream:
-            token = chunk.choices[0].delta.content
-            if token:
-                full_ai_response += token
-                yield f"data: {token}\n\n"
+            token = chunk.choices[0].delta.content if chunk.choices else None
 
+            if token:
+                buffer += token
+
+                # ✅ Only send when safe break
+                if any(buffer.endswith(x) for x in [" ", ".", "\n", ":", "!", "?"]):
+                    clean_chunk = clean_text(buffer)
+                    full_ai_response += clean_chunk
+                    yield f"data: {clean_chunk}\n\n"
+                    buffer = ""
+
+        # ✅ flush remaining buffer
+        if buffer:
+            clean_chunk = clean_text(buffer)
+            full_ai_response += clean_chunk
+            yield f"data: {clean_chunk}\n\n"
+
+        # ✅ final cleanup
+        full_ai_response = clean_text(full_ai_response)
+
+        # ✅ Save to DB
         db.add(Message(session_id=session_record.id, role="user", content=user_msg_content))
         db.add(Message(session_id=session_record.id, role="assistant", content=full_ai_response))
         db.commit()
 
     except Exception as e:
-        logger.error(f"[GROQ ERROR] {str(e)}")
-        yield f"data: Error: {str(e)}\n\n"
+     logger.error(f"[GROQ ERROR] {str(e)}")
+     yield "data: Error generating response. Please try again.\n\n"
         
  @staticmethod
  def get_chat_history(db: Session, user_id: str, subject_name: str, day: int, skip: int = 0, limit: int = 20):
@@ -369,9 +379,7 @@ KNOWLEDGE RULES:
     
     return formatted[::-1]
     
-    
-import re
-import logging
+
 
 logger = logging.getLogger(__name__)
 
