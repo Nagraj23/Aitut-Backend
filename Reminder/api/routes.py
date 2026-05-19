@@ -1,6 +1,8 @@
 import asyncio
 import json
-import redis
+import os
+# Use the async driver to handle streaming connections gracefully
+from redis.asyncio import Redis as AsyncRedis 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -12,8 +14,9 @@ from .auth import verify_token
 
 router = APIRouter()
 
-# Initialize Redis connection
-r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+# Read Redis configuration dynamically from environment variables
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
 class AlarmCreate(BaseModel):
     title: str
@@ -36,6 +39,7 @@ def create_alarm(
     )
     db.add(new_alarm)
     db.commit()
+    db.refresh(new_alarm)
     return {"status": "success", "id": new_alarm.id}
 
 @router.get("/alarms/active")
@@ -43,14 +47,13 @@ def list_active_alarms(
     db: Session = Depends(get_db),
     token_data: dict = Depends(verify_token)
 ):
-    # FIX: Use .get("sub") to stay consistent with your Create route
     user_id = token_data.get("user_id")
     return db.query(Alarm).filter(
         Alarm.is_active == True,
         Alarm.user_id == user_id
     ).all()
 
-# --- NEW: THE LISTENING PIPE ---
+# --- FIXED: THE REAL-TIME SSE LISTENING PIPE ---
 
 @router.get("/alarms/listen")
 async def listen_to_alarms(
@@ -60,33 +63,36 @@ async def listen_to_alarms(
     user_id = token_data.get("user_id")
 
     async def event_generator():
-        # 1. Subscribe to the user's Redis channel
-        pubsub = r.pubsub()
+        # Open an async redis socket connection dedicated to this user's stream
+        async_redis = AsyncRedis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
+        pubsub = async_redis.pubsub()
         channel_name = f"user_notifications_{user_id}"
-        pubsub.subscribe(channel_name)
+        await pubsub.subscribe(channel_name)
         
         print(f"🔌 Student {user_id} connected to real-time alarm pipe")
 
         try:
             while True:
-                # 2. Check if browser tab was closed
+                # Close down channels gracefully if the user navigates away or shuts the app
                 if await request.is_disconnected():
+                    print(f"🔌 Student {user_id} disconnected from pipe")
                     break
 
-                message = pubsub.get_message()
+                # Non-blocking pop from our Redis PubSub channel
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if message and message['type'] == 'message':
-                        yield f"data: {message['data']}\n\n"
+                    yield f"data: {message['data']}\n\n"
+                else:
+                    # Send a silent keep-alive comment frame to prevent client connection timeouts
+                    yield ": keep-alive ping\n\n"
                 
-               
-                
-                # 4. Stay efficient
                 await asyncio.sleep(0.5) 
 
         except Exception as e:
-            print(f"❌ Pipe Error: {e}")
+            print(f"❌ Pipe Error for user {user_id}: {e}")
         finally:
-            pubsub.unsubscribe(channel_name)
-            pubsub.close()
+            await pubsub.unsubscribe(channel_name)
+            await pubsub.close()
+            await async_redis.close()
 
-    # Returns the continuous 'stream' of data to React
     return StreamingResponse(event_generator(), media_type="text/event-stream")
