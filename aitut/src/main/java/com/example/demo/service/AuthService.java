@@ -2,7 +2,8 @@ package com.example.demo.service;
 
 import com.example.demo.dto.*;
 import com.example.demo.model.Users;
-import com.example.demo.model.RefreshToken;
+import com.example.demo.model.RefreshTokenEntity;
+
 import com.example.demo.model.VerificationToken;
 import com.example.demo.repository.UsersRepo;
 import com.example.demo.security.JWTService;
@@ -375,11 +376,12 @@ public class AuthService {
 
   private AuthResponse createAuthResponse(Users user) {
     String accessToken = jwtService.generateToken(user.getEmail(), user.getId());
-    RefreshToken refreshToken = refreshTokenService.createRefreshtoken(user.getEmail(), user.getId());
+    RefreshTokenEntity refreshToken = refreshTokenService.createRefreshtoken(user.getEmail(), user.getId());
 
     return AuthResponse.builder()
             .accessToken(accessToken)
             .refreshToken(refreshToken.getToken())
+
             .id(user.getId().toString())
             .name(user.getName())
             .role(user.getRole().toString())

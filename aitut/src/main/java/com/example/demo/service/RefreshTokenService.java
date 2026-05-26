@@ -1,7 +1,8 @@
 package com.example.demo.service;
 
-import com.example.demo.model.RefreshToken;
-import com.example.demo.repository.RefreshRepo;
+import com.example.demo.model.RefreshTokenEntity;
+import com.example.demo.repository.RefreshTokenRepository;
+
 import com.example.demo.repository.UsersRepo;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -15,7 +16,8 @@ import java.util.UUID;
 public class RefreshTokenService {
 
     @Autowired
-    private RefreshRepo refreshtokenRepository;
+    private RefreshTokenRepository refreshTokenRepository;
+
 
     @Autowired
     private UsersRepo userRepository;
@@ -25,9 +27,11 @@ public class RefreshTokenService {
      * We save the userId to Redis so the refresh endpoint knows who the user is
      * without hitting the PostgreSQL database again.
      */
-    public RefreshToken createRefreshtoken(String username, UUID userId) {
+    public RefreshTokenEntity createRefreshtoken(String username, UUID userId) {
+
         // 1. Create a new token object
-        RefreshToken refreshToken = new RefreshToken();
+        RefreshTokenEntity refreshToken = new RefreshTokenEntity();
+
 
         // 2. Set the owner, the user ID, and a unique UUID for the token
         refreshToken.setUsername(username);
@@ -38,20 +42,25 @@ public class RefreshTokenService {
         refreshToken.setExpiryDate(Instant.now().plus(30, ChronoUnit.DAYS));
 
         // 4. Save to Redis
-        return refreshtokenRepository.save(refreshToken);
+        return refreshTokenRepository.save(refreshToken);
+
     }
 
-    public Optional<RefreshToken> findByToken(String token) {
-        return refreshtokenRepository.findById(token);
+    public Optional<RefreshTokenEntity> findByToken(String token) {
+        return refreshTokenRepository.findById(token);
     }
+
 
     /**
      * Checks if the token is still valid.
-     * If expired, it deletes it from Redis to keep the cache clean.
+     * If expired, it deletes it from PostgreSQL.
      */
-    public RefreshToken verifyExpiration(RefreshToken token) {
+
+    public RefreshTokenEntity verifyExpiration(RefreshTokenEntity token) {
+
         if (token.getExpiryDate().isBefore(Instant.now())) {
-            refreshtokenRepository.delete(token);
+            refreshTokenRepository.delete(token);
+
             throw new RuntimeException("Refresh token was expired. Please make a new signin request");
         }
         return token;
@@ -61,6 +70,7 @@ public class RefreshTokenService {
      * Useful for logout - deletes the token so it can't be used again.
      */
     public void deleteByToken(String token) {
-        refreshtokenRepository.deleteById(token);
+        refreshTokenRepository.deleteById(token);
+
     }
 }

@@ -5,6 +5,8 @@ import com.example.demo.model.Users;
 import com.example.demo.security.JWTService;
 import com.example.demo.service.AuthService;
 import com.example.demo.service.RefreshTokenService;
+import com.example.demo.model.RefreshTokenEntity;
+
 import com.example.demo.service.VerificationTokenService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -104,6 +106,7 @@ public class AuthController {
 
         return refreshTokenService.findByToken(requestRefreshToken)
                 .map(refreshTokenService::verifyExpiration)
+
                 .map(token -> {
                     // Pull username and userId from Redis to create a fresh JWT
                     String newAccessToken = jwtService.generateToken(token.getUsername(), token.getUserId());
