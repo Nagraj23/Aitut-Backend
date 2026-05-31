@@ -292,12 +292,13 @@ KNOWLEDGE RULES:
     full_ai_response = ""
 
     def clean_text(text: str) -> str:
-     import re
-     text = re.sub(r'\s+([.,!?])', r'\1', text)   # fix space before punctuation
-     text = re.sub(r'\(\s+', '(', text)
-     text = re.sub(r'\s+\)', ')', text)
-     text = re.sub(r'\s{2,}', ' ', text)          # remove extra spaces
-     return text
+        if not text:
+         return ""
+    # Only fix spaces directly preceding standard closing punctuation characters
+        text = re.sub(r'\s+([.,!?])', r'\1', text)
+    # Reduce horizontal spaces without crushing structural paragraph breaks (\n\n)
+        text = re.sub(r'[ \t]{2,}', ' ', text)
+        return text
 
     try:
         response_stream = groq_client.chat.completions.create(
@@ -339,47 +340,52 @@ KNOWLEDGE RULES:
     except Exception as e:
      logger.error(f"[GROQ ERROR] {str(e)}")
      yield "data: Error generating response. Please try again.\n\n"
-        
+     
+     
  @staticmethod
  def get_chat_history(db: Session, user_id: str, subject_name: str, day: int, skip: int = 0, limit: int = 20):
-    # 1. First, find the subject to get the ID
-    subj = db.query(Subject).filter(
-        Subject.name.ilike(subject_name)
-    ).first()
+    # 1. Clean frontend url hyphen strings natively
+    clean_subject_name = subject_name.replace('-', ' ').strip().lower()
 
-    if not subj:
-        return []
-
-    # 2. Find the Session
-    # Use 'ChatSession' directly
-    session = db.query(ChatSession).filter(
+    # 2. ✅ ULTRA ACCURATE SEARCH:
+    # Fetch ALL session IDs belonging to this user for this day number.
+    # This prevents column type mismatches or string casing splits from breaking the query.
+    session_ids = db.query(ChatSession.id).filter(
         ChatSession.user_id == user_id,
-        ChatSession.subject_id == subj.id,
         ChatSession.day_number == day
-    ).first()
+    ).all()
 
-    if not session:
+    # Convert the list of tuple values into a flat list of strings: ['uuid-1', 'uuid-2']
+    flat_session_ids = [s[0] for s in session_ids]
+
+    # 3. If there are no sessions at all recorded in the database, return empty array safely
+    if not flat_session_ids:
+        print(f"ℹ️ [RAG CORE LOG] Zero chat session profiles found for user {user_id} on Day {day}")
         return []
 
-    # 3. Fetch messages using 'Message' directly
+    print(f"🔍 [RAG CORE LOG] Found active session rows: {flat_session_ids}. Extracting matching chat logs...")
+
+    # 4. ✅ THE BULLETPROOF FIX:
+    # Query the messages table directly using an IN constraint check against all active session IDs.
+    # This ensures that even if /ask created a duplicate session, your old chats are pulled instantly!
     past_messages = db.query(Message).filter(
-        Message.session_id == session.id
-    ).order_by(Message.timestamp.desc()).offset(skip).limit(limit).all()
+        Message.session_id.in_(flat_session_ids)
+    ).order_by(Message.timestamp.asc()).offset(skip).limit(limit).all()
     
-    # 4. Format and REVERSE
+    print(f"📝 [RAG CORE LOG] Directly retrieved {len(past_messages)} message records from SQL table.")
+
+    # 5. Format JSON array objects matching your TeachScreen component properties
     formatted = [
         {
             "id": f"msg_{msg.id}", 
             "role": str(msg.role).lower(), 
             "text": str(msg.content),
-            "timestamp": msg.timestamp.isoformat() if getattr(msg, 'timestamp', None) else None
+            "timestamp": msg.timestamp.isoformat() if msg.timestamp else None
         } 
         for msg in past_messages
     ]
     
-    return formatted[::-1]
-    
-
+    return formatted
 
 logger = logging.getLogger(__name__)
 
