@@ -12,6 +12,8 @@ from db import models
 from services.rag_service import RAGService
 import logging
 import edge_tts
+from groq import Groq
+import json
 import io
 
 router = APIRouter()
@@ -129,10 +131,9 @@ async def ask_teacher(
     # 2. FIXED LOOKUP: Find or create the session using a structural text fallback match
     # We strip out the rigid subject_id filter from the query so unseeded subjects resolve safely
     session = db.query(models.ChatSession).filter(
-        models.ChatSession.user_id == request.user_id,
-        models.ChatSession.day_number == day,
-        models.ChatSession.daily_topic.ilike(f"%{clean_subject_name}%")
-    ).first()
+    models.ChatSession.user_id == request.user_id,
+    models.ChatSession.day_number == day
+).order_by(models.ChatSession.created_at.desc()).first()
 
     # If it doesn't exist, build it cleanly from scratch
     if not session:
@@ -146,6 +147,11 @@ async def ask_teacher(
         db.add(session)
         db.commit()
         db.refresh(session)
+        
+    print("=" * 50)
+    print("ASK SESSION:", session.id)
+    print("ASK TOPIC:", session.daily_topic)
+    print("=" * 50)
         
     safe_subject_name = str(subj.name) if subj else str(subject_name)
     
@@ -235,47 +241,81 @@ async def speak(text: str, voice: str = "en-IN-NeerjaNeural"):
     return StreamingResponse(generate(), media_type="audio/mpeg")
 
 @router.post("/session/wrapup_by_context/{user_id}/{subject_name}/{day}")
-async def wrapup_by_context(user_id: str, subject_name: str, day: int, db: Session = Depends(get_db)):
-    # 1. Clean frontend url hyphen strings (e.g., "database-management" -> "database management")
-    clean_subject_name = subject_name.replace('-', ' ').strip().lower()
+async def wrapup_by_context(
+    user_id: str,
+    subject_name: str,
+    day: int,
+    db: Session = Depends(get_db)
+):
+    sessions = db.query(ChatSession).filter(
+    ChatSession.user_id == user_id,
+    ChatSession.day_number == day
+    ).all()
 
-    # 2. ✅ FIXED LOOKUP: Use our bulletproof, fail-safe query arrangement strategy
-    # Search directly by user and day first to establish the matching data boundary
-    session = db.query(ChatSession).filter(
-        ChatSession.user_id == user_id,
-        ChatSession.day_number == day,
-        ChatSession.daily_topic.ilike(f"%{clean_subject_name}%")
-    ).first()
+    session = None
+    max_messages = -1
 
-    # Fallback: If strict text pattern matching fails, pull the absolute latest row for this user/day combo
+    for s in sessions:
+        count = db.query(Message).filter(
+        Message.session_id == s.id
+        ).count()
+
+        if count > max_messages:
+            max_messages = count
+            session = s
+    print("SELECTED SESSION:", session.id)
+    print("SELECTED MESSAGE COUNT:", max_messages)
+
     if not session:
-        session = db.query(ChatSession).filter(
-            ChatSession.user_id == user_id,
-            ChatSession.day_number == day
-        ).order_by(ChatSession.created_at.desc()).first()
+        raise HTTPException(status_code=404, detail="No session found")
 
-    # If genuinely no row exists in the database table at all, throw clean 404
-    if not session:
-        raise HTTPException(status_code=404, detail="No active session found to wrap up for this profile")
+    sessions = db.query(ChatSession).filter(
+    ChatSession.user_id == user_id,
+    ChatSession.day_number == day
+    ).all()
 
-    # 3. Get history logs tied directly to this validated session ID
-    messages = db.query(Message).filter(Message.session_id == session.id).order_by(Message.timestamp.asc()).all()
-    history = [{"role": m.role, "content": m.content} for m in messages]
-    
-    # If they haven't sent any messages, just flag completion and exit cleanly
-    if not history:
-        session.is_completed = True
-        db.commit()
-        return {"status": "success", "summary": {"mastered": [], "loopholes": []}}
-        
-    # 4. Generate the AI recap performance matrix profile
+    print("\n===== SESSION DEBUG =====")
+
+    for s in sessions:
+        count = db.query(Message).filter(
+        Message.session_id == s.id
+    ).count()
+
+        print(
+            f"ID={s.id} | Topic={s.daily_topic} | Messages={count}"
+        )
+
+    print("=========================\n")
+
+    messages = db.query(Message).filter(
+    Message.session_id == session.id
+    ).order_by(Message.timestamp.asc()).all()
+
+    print("=" * 50)
+    print("WRAPUP SESSION ID:", session.id)
+    print("WRAPUP TOPIC:", session.daily_topic)
+    print("MESSAGE COUNT:", len(messages))
+    print("=" * 50)
+
+    history = [
+        {
+            "role": m.role,
+            "content": m.content
+        }
+        for m in messages
+    ]
+
+    print("HISTORY SAMPLE:")
+    for h in history[:5]:
+        print(h)
+    print("TOTAL HISTORY ITEMS:", len(history))
     recap = RAGService.generate_daily_recap(history)
 
-    # 5. Commit the metrics summaries natively into the verified database row columns
     session.is_completed = True
     session.mastered_topics = recap.get("mastered", [])
     session.loopholes = recap.get("loopholes", [])
-    
+    db.commit()
+
     db.commit()
 
     return {

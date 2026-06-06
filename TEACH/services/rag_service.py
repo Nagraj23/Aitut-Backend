@@ -173,27 +173,43 @@ class RAGService:
     s_branch = str(branch).lower()
     s_year = str(year)
 
-    # -------------------------------
-    # 2. SESSION MANAGEMENT
-    # -------------------------------
+    
     session_record = db.query(ChatSession).filter(
-        ChatSession.user_id == user_id,
-        ChatSession.day_number == day,
-        ChatSession.subject_id == subject_id
+    ChatSession.user_id == user_id,
+    ChatSession.day_number == day
     ).first()
+
+    print("=" * 50)
+    print("RAG LOOKUP")
+    print("USER:", user_id)
+    print("DAY:", day)
+    print("SUBJECT ID:", subject_id)
+
+    if session_record:
+        print("RAG SESSION:", session_record.id)
+    else:
+        print("RAG SESSION: NONE")
+    print("=" * 50)
 
     if not session_record:
         session_record = ChatSession(
-            user_id=user_id,
-            subject_id=subject_id,
-            day_number=day,
-            daily_topic=topic,
-            daily_task_json={"day": day, "topic": topic, "task": task},
-            is_completed=False
-        )
+        user_id=user_id,
+        subject_id=subject_id,
+        day_number=day,
+        daily_topic=topic,
+        daily_task_json={
+            "day": day,
+            "topic": topic,
+            "task": task
+        },
+        is_completed=False
+    )
+
         db.add(session_record)
         db.commit()
         db.refresh(session_record)
+
+    print("🚨 NEW SESSION CREATED:", session_record.id)
 
     # -------------------------------
     # 3. HISTORY
@@ -333,15 +349,144 @@ KNOWLEDGE RULES:
         full_ai_response = clean_text(full_ai_response)
 
         # ✅ Save to DB
-        db.add(Message(session_id=session_record.id, role="user", content=user_msg_content))
-        db.add(Message(session_id=session_record.id, role="assistant", content=full_ai_response))
+        print("=" * 50)
+        print("SAVING TO SESSION:", session_record.id)
+        print("USER MESSAGE:", user_msg_content[:100])
+        print("AI RESPONSE LENGTH:", len(full_ai_response))
+        print("=" * 50)
+
+        db.add(Message(
+        session_id=session_record.id,
+        role="user",
+        content=user_msg_content
+        ))
+
+        db.add(Message(
+        session_id=session_record.id,
+        role="assistant",
+        content=full_ai_response
+        ))
+
         db.commit()
+
+        print("✅ MESSAGES COMMITTED")
 
     except Exception as e:
      logger.error(f"[GROQ ERROR] {str(e)}")
      yield "data: Error generating response. Please try again.\n\n"
+  
      
-     
+ @staticmethod
+ def generate_daily_recap(history: List[dict]):
+   
+    """
+    Analyze a completed tutoring session and extract:
+    - mastered topics
+    - loopholes (revision areas)
+    """
+
+    history = history[-20:]   # last 20 messages only
+
+    chat_text = "\n".join(
+        [f"{m['role']}: {m['content']}" for m in history]
+    )
+    
+    system_prompt = """
+You are an educational auditor.
+
+Your task is to analyze a tutoring conversation and determine:
+
+1. mastered
+   - Concepts the student demonstrated understanding of.
+   - Concepts the student answered correctly.
+   - Concepts the student appeared comfortable with.
+
+2. loopholes
+   - Concepts requiring further revision.
+   - Concepts where confusion remained.
+   - Concepts that needed repeated explanation.
+
+Rules:
+- Return ONLY valid JSON.
+- No markdown.
+- No explanations outside JSON.
+- Use short topic names.
+- Both mastered and loopholes must be arrays.
+- Base conclusions only on evidence from the conversation.
+"""
+
+    user_prompt = f"""
+Analyze the tutoring session below.
+
+SESSION:
+
+{chat_text}
+
+Return JSON with this structure:
+
+{{
+  "mastered": [],
+  "loopholes": []
+}}
+"""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"}
+        )
+
+        raw_content = response.choices[0].message.content
+        
+        print("=" * 50)
+        print("RAW RECAP RESPONSE:")
+        print(raw_content)
+        print("=" * 50)
+
+        if not raw_content:
+            raise ValueError("Empty recap response")
+
+        print("========== DAILY RECAP ==========")
+        print(raw_content)
+        print("=================================")
+
+        result = json.loads(raw_content)
+
+        print("PARSED RECAP:")
+        print(result)
+        mastered = result.get("mastered", [])
+        loopholes = result.get("loopholes", [])
+
+        if not isinstance(mastered, list):
+            mastered = []
+
+        if not isinstance(loopholes, list):
+            loopholes = []
+
+        return {
+            "mastered": mastered,
+            "loopholes": loopholes
+        }
+
+    except Exception as e:
+        logger.error(f"Recap Generation Error: {e}")
+
+        return {
+            "mastered": [],
+            "loopholes": []
+        }
+            
  @staticmethod
  def get_chat_history(db: Session, user_id: str, subject_name: str, day: int, skip: int = 0, limit: int = 20):
     # 1. Clean frontend url hyphen strings natively
