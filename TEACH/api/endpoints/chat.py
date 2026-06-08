@@ -322,3 +322,32 @@ async def wrapup_by_context(
         "status": "success",
         "summary": recap
     }
+    
+@router.get("/today_recap/{user_id}")
+async def get_today_recap(
+    user_id: str,
+    db: Session = Depends(get_db)
+):
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.user_id == user_id,
+            ChatSession.is_completed == True
+        )
+        .order_by(ChatSession.created_at.desc())
+        .first()
+    )
+
+    if not session:
+        return {
+            "completed": False,
+            "message": "No completed session found"
+        }
+
+    return {
+        "completed": True,
+        "day": session.day_number,
+        "topic": session.daily_topic,
+        "mastered": session.mastered_topics or [],
+        "loopholes": session.loopholes or []
+    }

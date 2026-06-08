@@ -394,41 +394,33 @@ KNOWLEDGE RULES:
     system_prompt = """
 You are an educational auditor.
 
-Your task is to analyze a tutoring conversation and determine:
+Analyze ONLY the student's demonstrated knowledge.
 
 1. mastered
-   - Concepts the student demonstrated understanding of.
-   - Concepts the student answered correctly.
-   - Concepts the student appeared comfortable with.
+   - ONLY include concepts if the student:
+     * answered correctly
+     * explained the concept in their own words
+     * solved a question correctly
+
+   - Do NOT mark concepts as mastered merely because
+     the tutor explained them.
 
 2. loopholes
-   - Concepts requiring further revision.
+   - Concepts requiring revision.
+   - Concepts taught but never verified.
    - Concepts where confusion remained.
-   - Concepts that needed repeated explanation.
+   - Concepts the student asked follow-up questions about.
 
 Rules:
+- If there is insufficient evidence of mastery,
+  return an empty mastered array.
 - Return ONLY valid JSON.
 - No markdown.
-- No explanations outside JSON.
+- No explanations.
 - Use short topic names.
-- Both mastered and loopholes must be arrays.
 - Base conclusions only on evidence from the conversation.
 """
 
-    user_prompt = f"""
-Analyze the tutoring session below.
-
-SESSION:
-
-{chat_text}
-
-Return JSON with this structure:
-
-{{
-  "mastered": [],
-  "loopholes": []
-}}
-"""
 
     try:
         response = groq_client.chat.completions.create(
