@@ -290,7 +290,6 @@ async def wrapup_by_context(
     messages = db.query(Message).filter(
     Message.session_id == session.id
     ).order_by(Message.timestamp.asc()).all()
-
     print("=" * 50)
     print("WRAPUP SESSION ID:", session.id)
     print("WRAPUP TOPIC:", session.daily_topic)
@@ -328,26 +327,70 @@ async def get_today_recap(
     user_id: str,
     db: Session = Depends(get_db)
 ):
+
+    # DEBUG: Show all completed sessions
+    completed_sessions = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.user_id == user_id,
+            ChatSession.is_completed == True
+        )
+        .order_by(ChatSession.day_number.asc())
+        .all()
+    )
+
+    print("\n" + "=" * 60)
+    print("TODAY RECAP DEBUG")
+    print(f"USER ID: {user_id}")
+    print("=" * 60)
+
+    for s in completed_sessions:
+        print(
+            f"ID={s.id} | "
+            f"DAY={s.day_number} | "
+            f"TOPIC={s.daily_topic} | "
+            f"CREATED={s.created_at} | "
+            f"COMPLETED={s.is_completed}"
+        )
+
+    print("=" * 60)
+
+    # Get latest completed day
     session = (
         db.query(ChatSession)
         .filter(
             ChatSession.user_id == user_id,
             ChatSession.is_completed == True
         )
-        .order_by(ChatSession.created_at.desc())
+        .order_by(ChatSession.day_number.desc())
         .first()
     )
 
     if not session:
+        print("❌ No completed session found")
         return {
             "completed": False,
             "message": "No completed session found"
         }
 
-    return {
+    print("✅ SELECTED SESSION")
+    print(f"ID: {session.id}")
+    print(f"DAY: {session.day_number}")
+    print(f"TOPIC: {session.daily_topic}")
+    print(f"MASTERED: {session.mastered_topics}")
+    print(f"LOOPHOLES: {session.loopholes}")
+    print("=" * 60 + "\n")
+
+    response = {
         "completed": True,
         "day": session.day_number,
         "topic": session.daily_topic,
         "mastered": session.mastered_topics or [],
         "loopholes": session.loopholes or []
     }
+
+    print("📦 RESPONSE SENT TO FRONTEND:")
+    print(response)
+    print("=" * 60 + "\n")
+
+    return response

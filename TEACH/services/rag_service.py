@@ -378,51 +378,80 @@ KNOWLEDGE RULES:
      
  @staticmethod
  def generate_daily_recap(history: List[dict]):
-   
+
     """
     Analyze a completed tutoring session and extract:
     - mastered topics
     - loopholes (revision areas)
     """
 
-    history = history[-20:]   # last 20 messages only
+    if not history:
+        return {
+            "mastered": [],
+            "loopholes": []
+        }
+
+    # Keep last 50 messages
+    history = history[-50:]
 
     chat_text = "\n".join(
-        [f"{m['role']}: {m['content']}" for m in history]
+        [
+            f"{m['role']}: {m['content']}"
+            for m in history
+        ]
     )
-    
+
     system_prompt = """
 You are an educational auditor.
 
 Analyze ONLY the student's demonstrated knowledge.
 
-1. mastered
-   - ONLY include concepts if the student:
-     * answered correctly
-     * explained the concept in their own words
-     * solved a question correctly
+Return JSON:
 
-   - Do NOT mark concepts as mastered merely because
-     the tutor explained them.
+{
+  "mastered": [],
+  "loopholes": []
+}
+
+Rules:
+
+1. mastered
+   - Include ONLY concepts the student demonstrated.
+   - Student must have:
+     * answered correctly
+     * explained concept correctly
+     * solved a problem correctly
 
 2. loopholes
    - Concepts requiring revision.
    - Concepts taught but never verified.
    - Concepts where confusion remained.
-   - Concepts the student asked follow-up questions about.
+   - Concepts student struggled with.
 
-Rules:
-- If there is insufficient evidence of mastery,
-  return an empty mastered array.
-- Return ONLY valid JSON.
-- No markdown.
-- No explanations.
-- Use short topic names.
-- Base conclusions only on evidence from the conversation.
+3. If no evidence of mastery exists,
+   mastered must be [].
+
+4. Return ONLY valid JSON.
+5. No markdown.
+6. No explanations.
+7. Use short topic names.
 """
 
+    user_prompt = f"""
+Analyze this tutoring session.
+
+Conversation:
+
+{chat_text}
+"""
 
     try:
+
+        print("=" * 50)
+        print("RECAP INPUT")
+        print(user_prompt[:5000])
+        print("=" * 50)
+
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
@@ -435,28 +464,30 @@ Rules:
                     "content": user_prompt
                 }
             ],
-            temperature=0.2,
+            temperature=0.1,
             response_format={"type": "json_object"}
         )
 
         raw_content = response.choices[0].message.content
-        
+
         print("=" * 50)
-        print("RAW RECAP RESPONSE:")
+        print("RAW RECAP RESPONSE")
         print(raw_content)
         print("=" * 50)
 
         if not raw_content:
             raise ValueError("Empty recap response")
 
-        print("========== DAILY RECAP ==========")
-        print(raw_content)
-        print("=================================")
+        # Remove markdown if model adds it
+        raw_content = (
+            raw_content
+            .replace("```json", "")
+            .replace("```", "")
+            .strip()
+        )
 
         result = json.loads(raw_content)
 
-        print("PARSED RECAP:")
-        print(result)
         mastered = result.get("mastered", [])
         loopholes = result.get("loopholes", [])
 
@@ -466,13 +497,32 @@ Rules:
         if not isinstance(loopholes, list):
             loopholes = []
 
+        print("=" * 50)
+        print("PARSED RECAP")
+        print(result)
+        print("=" * 50)
+
         return {
             "mastered": mastered,
             "loopholes": loopholes
         }
 
+    except json.JSONDecodeError as e:
+
+        logger.error(
+            f"Recap JSON Parse Error: {e}"
+        )
+
+        return {
+            "mastered": [],
+            "loopholes": []
+        }
+
     except Exception as e:
-        logger.error(f"Recap Generation Error: {e}")
+
+        logger.error(
+            f"Recap Generation Error: {e}"
+        )
 
         return {
             "mastered": [],
