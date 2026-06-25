@@ -327,7 +327,6 @@ async def get_today_recap(
     user_id: str,
     db: Session = Depends(get_db)
 ):
-
     # DEBUG: Show all completed sessions
     completed_sessions = (
         db.query(ChatSession)
@@ -355,14 +354,14 @@ async def get_today_recap(
 
     print("=" * 60)
 
-    # Get latest completed day
+    # 🛠️ FIX: Order by ID or creation date descending to grab the absolute newest entry modified
     session = (
         db.query(ChatSession)
         .filter(
             ChatSession.user_id == user_id,
             ChatSession.is_completed == True
         )
-        .order_by(ChatSession.day_number.desc())
+        .order_by(ChatSession.id.desc()) # ✨ Always pulls the row you JUST generated/saved
         .first()
     )
 
