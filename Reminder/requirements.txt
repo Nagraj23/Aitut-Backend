@@ -1,0 +1,11 @@
+# Web Framework
+fastapi==0.110.0
+uvicorn==0.27.1
+
+# Database Driver (Updated for Python 3.13 compatibility)
+psycopg[binary]>=3.2.0
+sqlalchemy==2.0.27
+
+# Environment & Utilities
+python-dotenv==1.0.1
+pydantic==2.6.3
