@@ -17,38 +17,42 @@ from db.models import (
 )
 from chromadb.api.types import Where
 import os 
-from .chroma_service import get_collection
+from .drant_service import search_points
+from sentence_transformers import SentenceTransformer
 
-# Initialize Groq Client
-teach_db_path = "../TEACH/db/chroma_storage" 
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# This goes one level up, then into the TEACH folder
-SHARED_CHROMA_PATH = os.path.join(BASE_DIR, '..', 'TEACH', 'chroma_data')
-
-chroma_client = chromadb.PersistentClient(path=SHARED_CHROMA_PATH)
 
 client = Groq(api_key=settings.GROQ_API_KEY)
 MODEL_NAME = "llama-3.1-8b-instant"
 
-def get_syllabus_from_chroma(subject_id, user_goal="Complete syllabus mastery", units=None):
-    if not subject_id: return None
+def get_syllabus_from_qdrant(subject_id, user_goal="Complete syllabus mastery"):
+    if not subject_id:
+        return None
+
     try:
-        collection_name = str(subject_id).lower().strip()
-        collection = get_collection(collection_name)
-        
-        # Increase n_results to 20 or 25 to get the WHOLE syllabus 
-        # since we can't filter by unit metadata.
-        results = collection.query(
-            query_texts=[user_goal], 
-            n_results=25, 
-            where={"doc_type": "syllabus"}
+        collection_name = str(subject_id).replace(" ", "").lower().strip()
+
+        embedding = embedding_model.encode(user_goal).tolist()
+
+        results = search_points(
+            collection_name=collection_name,
+            query_vector=embedding,
+            subject=collection_name,
+            doc_type="syllabus",
+            limit=25,
         )
-        
-        if not results['documents']: return "No syllabus found."
-        return " ".join(results['documents'][0]) 
+
+        if not results:
+            return None
+
+        syllabus = []
+
+        for hit in results:
+            syllabus.append(hit.payload["text"])
+
+        return "\n".join(syllabus)
+
     except Exception as e:
-        print(f"Error: {e}")
+        print(e)
         return None
     
 import json
@@ -264,7 +268,7 @@ def generate_deep_roadmap(user_id, role="student", subject_id=None, phase_number
     # --- 1. CONTEXT GATHERING ---
     syllabus_context = None
     if role == "student" and subject_id:
-        syllabus_context = get_syllabus_from_chroma(subject_id)
+        syllabus_context = get_syllabus_from_qdrant(subject_id)
         # Handle cases where Chroma returns a string saying no syllabus found
         if syllabus_context == "No syllabus found.":
             syllabus_context = None

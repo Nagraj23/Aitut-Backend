@@ -16,7 +16,13 @@ from db.models import ChatSession, Message, Subject
 from sentence_transformers import SentenceTransformer
 from core.config import get_settings
 from groq.types.chat import ChatCompletionMessageParam
-from db.chroma_db import get_collection
+from db.Qdrant import (
+    upsert_points,
+    search_points,
+    create_collection_if_not_exists,
+)
+from qdrant_client import models
+
 from datetime import datetime
 from typing import Optional, List, Generator
 from sqlalchemy.orm import Session
@@ -90,7 +96,8 @@ class RAGService:
     chunks = splitter.split_documents(pages)
 
     collection_name = f"{university}_{branch}_{year}_{subject}".lower()
-    collection = get_collection(collection_name)
+
+    create_collection_if_not_exists(collection_name)
     
     file_name = os.path.basename(file_path)
 
@@ -103,7 +110,7 @@ class RAGService:
             
             # Use a unique ID that includes a timestamp or hash to prevent overwriting 
             # if multiple people upload files with the same name
-            unique_id = f"{collection_name}_{doc_type}_{i}_{int(time.time())}"
+            unique_id = str(uuid.uuid4())
             
             ids.append(unique_id)
             embeddings.append(embedding)
@@ -122,20 +129,38 @@ class RAGService:
 
     # --- BATCH UPLOAD LOGIC ---
     if ids:
-        try:
-            # Break into smaller batches of 100 to avoid API timeouts
+         try:
             for j in range(0, len(ids), 100):
-                collection.add(
-                    ids=ids[j:j+100],
-                    embeddings=embeddings[j:j+100],
-                    documents=documents[j:j+100],
-                    metadatas=metadatas[j:j+100]
+
+                points = []
+
+            for idx, emb, doc, meta in zip(
+                ids[j:j+100],
+                embeddings[j:j+100],
+                documents[j:j+100],
+                metadatas[j:j+100]
+            ):
+
+                payload = meta.copy()
+                payload["text"] = doc
+
+                points.append(
+                    models.PointStruct(
+                        id=idx,
+                        vector=emb,
+                        payload=payload,
+                    )
                 )
-            return f"Success: {len(ids)} chunks added to {collection_name}"
-        except Exception as e:
-            return f"Storage Error: {str(e)}"
-            
-    return "Failed: No content processed."
+
+            upsert_points(
+                collection_name=collection_name,
+                points=points,
+            )
+
+            return f"Success: {len(ids)} chunks uploaded."
+
+         except Exception as e:
+                return f"Storage Error: {e}"
     
     
 
@@ -233,24 +258,30 @@ class RAGService:
         try:
            if subject_record.vector_collection is not None:
             collection_name = str(subject_record.vector_collection)
-            collection = get_collection(collection_name)
-            
+           
             query_text = f"{topic} {question}" if question.strip() else topic
-            q_embedding = await run_in_threadpool(embedding_model.encode, query_text)
-            
-            results = collection.query(
-                query_embeddings=[q_embedding.tolist()],
-                n_results=3,
-                where={
-                    "$and": [
-                        {"subject": s_sub},
-                        {"doc_type": "notes"}
-                    ]
-                }
+
+            q_embedding = await run_in_threadpool(
+            embedding_model.encode,
+            query_text,
             )
 
-            raw_docs = (results.get("documents") or [[]])[0]
-            raw_meta = (results.get("metadatas") or [[]])[0]
+            results = search_points(
+                collection_name=collection_name,
+                query_vector=q_embedding.tolist(),
+                subject=s_sub,
+                doc_type="notes",
+                limit=3,
+            )
+
+            raw_docs = []
+            raw_meta = []
+
+            for hit in results:
+                payload = hit.payload
+
+                raw_docs.append(payload.get("text", ""))
+                raw_meta.append(payload)
 
             if raw_docs:
                 context = "\n\n".join([

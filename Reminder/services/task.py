@@ -1,16 +1,14 @@
 import datetime
 import json
-import os
-import redis
+
 from celery_app import celery_app
+from config.redis import get_redis
+
+
 from db.session import SessionLocal
 from db.models import Alarm
 
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-
-# Standard client connection for synchronous Celery workers
-r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
+redis_client = get_redis() 
 
 @celery_app.task
 def check_and_trigger_alarms():
@@ -57,10 +55,11 @@ def check_and_trigger_alarms():
                 channel_name = f"user_notifications_{alarm.user_id}"
                 
                 try:
-                    r.publish(channel_name, json.dumps(payload))
+                    redis_client.publish(channel_name, json.dumps(payload))
                 except Exception:
                     print(f"⚠️ Redis publish failed for channel {channel_name}. Retrying once...")
-                    r.publish(channel_name, json.dumps(payload))
+                    redis_client.publish(channel_name, json.dumps(payload))
+
 
                 print(f"📡 Event safely pushed down → {channel_name}")
 

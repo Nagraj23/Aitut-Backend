@@ -1,8 +1,8 @@
 import asyncio
 import json
-import os
 # Use the async driver to handle streaming connections gracefully
-from redis.asyncio import Redis as AsyncRedis 
+from config.redis import get_async_redis
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -14,9 +14,8 @@ from .auth import verify_token
 
 router = APIRouter()
 
-# Read Redis configuration dynamically from environment variables
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+from config.redis import get_redis
+
 
 class AlarmCreate(BaseModel):
     title: str
@@ -64,7 +63,8 @@ async def listen_to_alarms(
 
     async def event_generator():
         # Open an async redis socket connection dedicated to this user's stream
-        async_redis = AsyncRedis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
+        async_redis = get_async_redis()
+
         pubsub = async_redis.pubsub()
         channel_name = f"user_notifications_{user_id}"
         await pubsub.subscribe(channel_name)

@@ -48,9 +48,9 @@ REST_FRAMEWORK = {
 SPRING_JWT_SECRET = os.getenv("SPRING_JWT_SECRET") # Must match Spring Boot secret [cite: 10]
 GROQ_API_KEY = os.getenv("GROQ_API_KEY") # 👈 Add this
 
-CHROMA_DB_PATH = os.path.abspath(os.path.join(BASE_DIR, '..', 'TEACH', 'chroma_data'))
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
-print(f"📡 System Linking: ChromaDB path set to {CHROMA_DB_PATH}")
 # Optional: Define your preferred Groq model here for easy global changes
 GROQ_DEFAULT_MODEL = "llama-3.1-8b-instant"
 CHAT_MODEL = GROQ_DEFAULT_MODEL
@@ -62,15 +62,15 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # Database (PostgreSQL)
 # settings.py
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'Aitut',
-        'USER': 'postgres',
-        'PASSWORD': 'Nagraj@2005',
-        'HOST': '127.0.0.1',  # Use the IP instead of localhost
-        'PORT': '5432',
-        'OPTIONS': {
-            'sslmode': 'disable',
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_NAME"),
+        "USER": os.getenv("DB_USER"),
+        "PASSWORD": os.getenv("DB_PASSWORD"),
+        "HOST": os.getenv("DB_HOST"),
+        "PORT": os.getenv("DB_PORT"),
+        "OPTIONS": {
+            "sslmode": "require",
         },
     }
 }
