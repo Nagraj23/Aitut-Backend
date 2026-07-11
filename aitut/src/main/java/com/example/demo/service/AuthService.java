@@ -51,15 +51,7 @@ public class AuthService {
 
     private final RestTemplate restTemplate = new RestTemplate();
 
-    @Value("${spring.security.oauth2.client.registration.github.client-id}")
-    private String githubClientId;
-
-    @Value("${spring.security.oauth2.client.registration.github.client-secret}")
-    private String githubClientSecret;
-
-    @Value("${spring.security.oauth2.client.registration.google.client-id}")
-    private String googleClientId;
-
+   
     public VerificationTokenService getTokenService() {
         return tokenService;
     }
@@ -157,82 +149,11 @@ public class AuthService {
 
     // ================= GOOGLE LOGIN =================
 
-    public AuthResponse googleLogin(String idTokenString) {
-
-        try {
-            GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
-                    new NetHttpTransport(), new GsonFactory())
-                    .setAudience(Collections.singletonList(googleClientId))
-                    .build();
-
-            GoogleIdToken idToken = verifier.verify(idTokenString);
-
-            if (idToken == null) {
-                throw new RuntimeException("Invalid Google Token");
-            }
-
-            GoogleIdToken.Payload payload = idToken.getPayload();
-            String email = payload.getEmail();
-            String name = (String) payload.get("name");
-
-            Users user = repo.findByEmail(email).orElseGet(() ->
-                    repo.save(Users.builder()
-                            .name(name)
-                            .email(email)
-                            .password(encoder.encode(UUID.randomUUID().toString()))
-                            .role(Users.Role.STUDENT)
-                            .verified(true)
-                            .build())
-            );
-
-            return createAuthResponse(user);
-
-        } catch (Exception e) {
-            throw new RuntimeException("Google Auth Failed: " + e.getMessage());
-        }
-    }
+   
 
     // ================= GITHUB LOGIN =================
 
-    public AuthResponse githubLogin(String code) {
-
-        String tokenUrl = "https://github.com/login/oauth/access_token";
-
-        MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-        params.add("client_id", githubClientId);
-        params.add("client_secret", githubClientSecret);
-        params.add("code", code);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
-
-        HttpEntity<MultiValueMap<String, String>> request =
-                new HttpEntity<>(params, headers);
-
-        Map<String, Object> tokenResponse =
-                restTemplate.postForObject(tokenUrl, request, Map.class);
-
-        if (tokenResponse == null || tokenResponse.get("access_token") == null) {
-            throw new RuntimeException("GitHub Login Failed");
-        }
-
-        String accessToken = (String) tokenResponse.get("access_token");
-
-        String email = fetchPrimaryEmail(accessToken);
-        String name = fetchGithubName(accessToken);
-
-        Users user = repo.findByEmail(email).orElseGet(() ->
-                repo.save(Users.builder()
-                        .name(name)
-                        .email(email)
-                        .password(encoder.encode(UUID.randomUUID().toString()))
-                        .role(Users.Role.STUDENT)
-                        .verified(true)
-                        .build())
-        );
-
-        return createAuthResponse(user);
-    }
+    
 
     private String fetchPrimaryEmail(String token) {
 

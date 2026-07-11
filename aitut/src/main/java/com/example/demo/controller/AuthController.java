@@ -56,16 +56,6 @@ public class AuthController {
         return ResponseEntity.ok("Students added and welcome emails sent successfully!");
     }
 
-
-
-    @PostMapping("/google-login")
-    public ResponseEntity<AuthResponse> googleLogin(@RequestBody Map<String, String> request) {
-        // This extracts the "token" from the JSON body
-        String token = request.get("token");
-
-        // Now this matches the 1 parameter the Service expects!
-        return ResponseEntity.ok(authService.googleLogin(token));
-    }
     // ✅ Update profile
  // 1. Route for Personal/Basic Details
 @PutMapping("/update-profile/basic/{userId}")
@@ -116,12 +106,7 @@ public class AuthController {
                 })
                 .orElseThrow(() -> new RuntimeException("Refresh token is not in database or expired!"));
     }
-    @PostMapping("/github")
-    public ResponseEntity<AuthResponse> githubLogin(@RequestBody GithubLoginRequest request) {
-
-        AuthResponse response = authService.githubLogin(request.getCode());
-        return ResponseEntity.ok(response);
-    }
+    
     // 🔥 Reset Password
     @PostMapping("/reset-password")
     public ResponseEntity<String> resetPassword(@RequestBody ResetPasswordDTO request) {
