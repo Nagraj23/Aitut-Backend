@@ -5,6 +5,7 @@ django-cors-headers>=4.3
 psycopg2-binary>=2.9
 groq>=0.4
 chromadb>=0.5
+qdrant-client>=1.18.0
 PyJWT>=2.8
 python-dotenv>=1.0
 gunicorn>=21.2
