@@ -4,13 +4,15 @@ from api.views import (
     SubmitAnswersView, 
     GetLatestRoadmapView,
     GenerateRoadmapView ,# 👈 New View
-    UserProgressStatusView
+    UserProgressStatusView,
+    health
     
 )
 
 urlpatterns = [
     path('api/assessment/generate/', GenerateTestView.as_view(), name='gen_test'),
     path('api/assessment/submit/', SubmitAnswersView.as_view(), name='sub_test'),
+    path('',health.as_view(),name='health'),
     # path('api/assessment/results/', SWOTResultView.as_view(), name='get_results'),
     
     # Day 8: Generate the deep roadmap

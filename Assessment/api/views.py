@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from django.http import JsonResponse
 import json
 from django.db import connection
 from rest_framework.permissions import IsAuthenticated
@@ -500,3 +501,10 @@ class GetLatestRoadmapView(APIView):
             "exists": True,
             **roadmap_data
         }, status=status.HTTP_200_OK)
+        
+
+def health(request):
+    return JsonResponse({
+        "status": "ok",
+        "message": "Backend is running 🚀"
+    })
